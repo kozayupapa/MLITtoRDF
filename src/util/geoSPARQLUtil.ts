@@ -1,7 +1,20 @@
 import { Feature, FeatureCollection, Point, Polygon } from "geojson";
-import * as oxigraph from "oxigraph/web";
 // @ts-expect-error - wellknown module lacks type definitions
 import wellknown from "wellknown";
+
+// RDF4J integration interface
+interface RDF4JStore {
+  baseUrl: string;
+  repositoryId: string;
+}
+
+interface RDFTriple {
+  subject: string;
+  predicate: string;
+  object: string;
+  objectType: 'uri' | 'literal';
+  datatype?: string;
+}
 
 // GeoSPARQLプレフィックス
 const GEOSPARQL_PREFIXES = `
@@ -21,6 +34,9 @@ const DATA_PROPERTIES = {
       population: "ex:population",
       meshId: "ex:meshId",
       color: "ex:color",
+      shicode: "ex:shicode",
+      population2020: "ex:population2020",
+      population2024: "ex:population2024",
     },
   },
   landuse: {
@@ -66,8 +82,8 @@ const DATA_PROPERTIES = {
   },
 };
 
-// GeoJSONをOxigraph Triple オブジェクトに変換
-export function convertGeoJSONToTriples(feature: Feature, type: keyof typeof DATA_PROPERTIES): oxigraph.Quad[] {
+// GeoJSONをRDF4J Triple オブジェクトに変換
+export function convertGeoJSONToTriples(feature: Feature, type: keyof typeof DATA_PROPERTIES): RDFTriple[] {
   const { geometry, properties = {} } = feature;
   const id = properties?.id ?? crypto.randomUUID();
   const typeConfig = DATA_PROPERTIES[type];
@@ -80,39 +96,61 @@ export function convertGeoJSONToTriples(feature: Feature, type: keyof typeof DAT
     throw new Error(`Unsupported geometry type: ${geometry.type}`);
   }
 
-  const triples: oxigraph.Quad[] = [];
+  const triples: RDFTriple[] = [];
 
   // URIを作成
-  const featureNode = oxigraph.namedNode(`http://example.org/disaster#${type}_${id}`);
-  const rdfType = oxigraph.namedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
-  const rdfsLabel = oxigraph.namedNode("http://www.w3.org/2000/01/rdf-schema#label");
-  const geoHasGeometry = oxigraph.namedNode("http://www.opengis.net/ont/geosparql#hasGeometry");
-  const geoGeometry = oxigraph.namedNode("http://www.opengis.net/ont/geosparql#Geometry");
-  const geoAsGeoJSON = oxigraph.namedNode("http://www.opengis.net/ont/geosparql#asGeoJSON");
-  const geoAsWKT = oxigraph.namedNode("http://www.opengis.net/ont/geosparql#asWKT");
-  const geoWktLiteral = oxigraph.namedNode("http://www.opengis.net/ont/geosparql#wktLiteral");
+  const featureUri = `http://example.org/disaster#${type}_${id}`;
+  const geometryUri = `http://example.org/disaster#geometry_${id}`;
 
   // 基本トリプルを追加
-  triples.push(
-    oxigraph.triple(featureNode, rdfType, oxigraph.namedNode(`http://example.org/disaster#${typeConfig.type.replace("ex:", "")}`)),
-    oxigraph.triple(featureNode, rdfsLabel, oxigraph.literal(`${type} feature ${id}`)),
-  );
+  triples.push({
+    subject: featureUri,
+    predicate: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+    object: `http://example.org/disaster#${typeConfig.type.replace("ex:", "")}`,
+    objectType: "uri"
+  });
 
-  // ジオメトリ用のブランクノード
-  const geometryNode = oxigraph.blankNode(`geometry_${id}`);
+  triples.push({
+    subject: featureUri,
+    predicate: "http://www.w3.org/2000/01/rdf-schema#label",
+    object: `${type} feature ${id}`,
+    objectType: "literal"
+  });
+
+  // ジオメトリトリプル
+  triples.push({
+    subject: featureUri,
+    predicate: "http://www.opengis.net/ont/geosparql#hasGeometry",
+    object: geometryUri,
+    objectType: "uri"
+  });
+
+  triples.push({
+    subject: geometryUri,
+    predicate: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+    object: "http://www.opengis.net/ont/geosparql#Geometry",
+    objectType: "uri"
+  });
 
   // GeoJSON形式で保存
-  triples.push(
-    oxigraph.triple(featureNode, geoHasGeometry, geometryNode),
-    oxigraph.triple(geometryNode, rdfType, geoGeometry),
-    oxigraph.triple(geometryNode, geoAsGeoJSON, oxigraph.literal(JSON.stringify(geometry))),
-  );
+  triples.push({
+    subject: geometryUri,
+    predicate: "http://www.opengis.net/ont/geosparql#asGeoJSON",
+    object: JSON.stringify(geometry),
+    objectType: "literal"
+  });
 
   // WKT形式でも保存（wellknownライブラリを使用）
   try {
     const wktString = wellknown.stringify(geometry);
     if (wktString) {
-      triples.push(oxigraph.triple(geometryNode, geoAsWKT, oxigraph.literal(wktString, geoWktLiteral)));
+      triples.push({
+        subject: geometryUri,
+        predicate: "http://www.opengis.net/ont/geosparql#asWKT",
+        object: wktString,
+        objectType: "literal",
+        datatype: "http://www.opengis.net/ont/geosparql#wktLiteral"
+      });
     } else {
       console.warn("⚠️ wellknown.stringify returned null or empty string");
     }
@@ -128,26 +166,42 @@ export function convertGeoJSONToTriples(feature: Feature, type: keyof typeof DAT
 
       const propertyUri = typeConfig.properties[key as keyof typeof typeConfig.properties] || `ex:${key}`;
       const propertyUriString = String(propertyUri);
-      const propertyNode = oxigraph.namedNode(
-        propertyUriString.startsWith("ex:") ? `http://example.org/disaster#${propertyUriString.replace("ex:", "")}` : propertyUriString,
-      );
+      const fullPropertyUri = propertyUriString.startsWith("ex:") 
+        ? `http://example.org/disaster#${propertyUriString.replace("ex:", "")}` 
+        : propertyUriString;
 
       if (typeof value === "string") {
-        triples.push(oxigraph.triple(featureNode, propertyNode, oxigraph.literal(value)));
+        triples.push({
+          subject: featureUri,
+          predicate: fullPropertyUri,
+          object: value,
+          objectType: "literal"
+        });
       } else if (typeof value === "number") {
-        triples.push(
-          oxigraph.triple(featureNode, propertyNode, oxigraph.literal(value.toString(), oxigraph.namedNode("http://www.w3.org/2001/XMLSchema#decimal"))),
-        );
+        triples.push({
+          subject: featureUri,
+          predicate: fullPropertyUri,
+          object: value.toString(),
+          objectType: "literal",
+          datatype: "http://www.w3.org/2001/XMLSchema#decimal"
+        });
       } else if (typeof value === "boolean") {
-        triples.push(
-          oxigraph.triple(featureNode, propertyNode, oxigraph.literal(value.toString(), oxigraph.namedNode("http://www.w3.org/2001/XMLSchema#boolean"))),
-        );
+        triples.push({
+          subject: featureUri,
+          predicate: fullPropertyUri,
+          object: value.toString(),
+          objectType: "literal",
+          datatype: "http://www.w3.org/2001/XMLSchema#boolean"
+        });
       } else if (Array.isArray(value)) {
-        triples.push(oxigraph.triple(featureNode, propertyNode, oxigraph.literal(JSON.stringify(value))));
+        triples.push({
+          subject: featureUri,
+          predicate: fullPropertyUri,
+          object: JSON.stringify(value),
+          objectType: "literal"
+        });
       } else if (value !== null && value !== undefined) {
         console.warn(`Unsupported property type for ${key}: ${typeof value}`);
-      } else {
-        // null または undefined の場合は何もしない
       }
     });
   }
@@ -155,8 +209,84 @@ export function convertGeoJSONToTriples(feature: Feature, type: keyof typeof DAT
   return triples;
 }
 
-// GeoSPARQLクエリの実行（デバッグログ付き）
-export function executeGeoSPARQLQuery(store: oxigraph.Store, query: string): any {
+// RDF4J SPARQL クエリ実行用のヘルパー関数
+export async function executeRDF4JSPARQLQuery(store: RDF4JStore, query: string): Promise<any> {
+  const queryUrl = `${store.baseUrl}/repositories/${store.repositoryId}`;
+  
+  const response = await fetch(queryUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/sparql-query',
+      'Accept': 'application/sparql-results+json'
+    },
+    body: query
+  });
+
+  if (!response.ok) {
+    throw new Error(`SPARQL query failed: ${response.status} ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+// RDF4J bulk insert用のヘルパー関数
+export async function bulkInsertTriples(store: RDF4JStore, triples: RDFTriple[], batchSize: number = 1000): Promise<void> {
+  const insertUrl = `${store.baseUrl}/repositories/${store.repositoryId}/statements`;
+  
+  // トリプルをTurtle形式に変換
+  const convertToTurtle = (triples: RDFTriple[]): string => {
+    const prefixes = `
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix ex: <http://example.org/disaster#> .
+
+`;
+    
+    const tripleStrings = triples.map(triple => {
+      const subject = `<${triple.subject}>`;
+      const predicate = `<${triple.predicate}>`;
+      let object: string;
+      
+      if (triple.objectType === 'uri') {
+        object = `<${triple.object}>`;
+      } else {
+        if (triple.datatype) {
+          object = `"${triple.object.replace(/"/g, '\\"')}"^^<${triple.datatype}>`;
+        } else {
+          object = `"${triple.object.replace(/"/g, '\\"')}"`;
+        }
+      }
+      
+      return `${subject} ${predicate} ${object} .`;
+    });
+    
+    return prefixes + tripleStrings.join('\n');
+  };
+
+  // バッチ処理でトリプルを挿入
+  for (let i = 0; i < triples.length; i += batchSize) {
+    const batch = triples.slice(i, i + batchSize);
+    const turtleData = convertToTurtle(batch);
+    
+    const response = await fetch(insertUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/turtle'
+      },
+      body: turtleData
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to insert batch ${Math.floor(i / batchSize) + 1}: ${response.status} ${response.statusText}`);
+    }
+
+    console.log(`✅ Inserted batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(triples.length / batchSize)} (${batch.length} triples)`);
+  }
+}
+
+// 旧Oxigraphクエリ実行関数（後方互換性のため）
+export function executeGeoSPARQLQuery(store: any, query: string): any {
   console.log("🔍 Executing GeoSPARQL query...");
   console.log("📝 Query:", query);
 
@@ -401,18 +531,19 @@ export async function getLandUseInArea(
   }
 }
 
-// データをGeoSPARQLストアに保存（Triple オブジェクト版）
-export function saveDataToGeoSPARQL(
-  store: oxigraph.Store,
+// データをRDF4Jストアに保存（Triple オブジェクト版）
+export async function saveDataToRDF4J(
+  store: RDF4JStore,
   data: {
-    populationData: FeatureCollection<Point>;
-    landUseData: FeatureCollection<Point>;
-    schoolData: FeatureCollection<Point>;
-    medicalData: FeatureCollection<Point>;
-    disasterData: FeatureCollection<Polygon>;
+    populationData: FeatureCollection;
+    landUseData: FeatureCollection;
+    schoolData: FeatureCollection;
+    medicalData: FeatureCollection;
+    disasterData: FeatureCollection;
   },
-): void {
-  console.log("🔄 Starting GeoSPARQL store save operation with Triple objects...");
+  batchSize: number = 1000
+): Promise<number> {
+  console.log("🔄 Starting RDF4J store save operation...");
   console.log("📊 Data counts:", {
     population: data.populationData.features.length,
     landUse: data.landUseData.features.length,
@@ -421,36 +552,22 @@ export function saveDataToGeoSPARQL(
     disaster: data.disasterData.features.length,
   });
 
-  console.dir(data.populationData.features, { depth: null });
-
   try {
+    let allTriples: RDFTriple[] = [];
     let totalConvertedFeatures = 0;
     let totalErrors = 0;
 
-    // Triple オブジェクトを使用して個別フィーチャーを処理
-    const processFeatures = (features: Feature[], type: keyof typeof DATA_PROPERTIES) => {
-      console.log(`🔨 Processing ${features.length} ${type} features with Triple objects...`);
+    // フィーチャーを処理してトリプルに変換
+    const processFeatures = (features: Feature[], type: keyof typeof DATA_PROPERTIES): RDFTriple[] => {
+      console.log(`🔨 Processing ${features.length} ${type} features...`);
       let convertedCount = 0;
       let errorCount = 0;
+      const featureTriples: RDFTriple[] = [];
 
       features.forEach((feature, index) => {
         try {
           const triples = convertGeoJSONToTriples(feature, type);
-
-          if (index === 0) {
-            console.log(`✅ Sample ${type} generated ${triples.length} triples for first feature`);
-          }
-
-          // 各Triple を個別に追加
-          triples.forEach((triple, tripleIndex) => {
-            try {
-              store.add(triple);
-            } catch (addError) {
-              console.error(`❌ Failed to add ${type} feature ${index} triple ${tripleIndex}:`, addError);
-              errorCount++;
-            }
-          });
-
+          featureTriples.push(...triples);
           convertedCount++;
 
           if (index % 100 === 0 && index > 0) {
@@ -459,47 +576,54 @@ export function saveDataToGeoSPARQL(
         } catch (error) {
           errorCount++;
           console.error(`❌ Error converting ${type} feature ${index}:`, error);
-          if (errorCount === 1) {
-            console.log("🔍 Problematic feature:", JSON.stringify(feature, null, 2));
-          }
         }
       });
 
-      console.log(`📈 ${type}: ${convertedCount} converted, ${errorCount} errors`);
+      console.log(`📈 ${type}: ${convertedCount} converted, ${errorCount} errors, ${featureTriples.length} triples`);
       totalConvertedFeatures += convertedCount;
       totalErrors += errorCount;
+      
+      return featureTriples;
     };
 
     // 各データタイプを処理
-    if (data.disasterData.features.length > 0) {
-      processFeatures(data.disasterData.features, "disaster");
-    }
-
-    // より小さなデータセットから始める
-    if (data.schoolData.features.length > 0) {
-      processFeatures(data.schoolData.features.slice(0), "school"); // 最初の10件のみテスト
-    }
-
-    if (data.medicalData.features.length > 0) {
-      processFeatures(data.medicalData.features.slice(0), "medical"); // 最初の10件のみテスト
-    }
-
-    // 大きなデータセットは一部のみテスト
     if (data.populationData.features.length > 0) {
-      processFeatures(data.populationData.features.slice(0), "population"); // 最初の5件のみテスト
+      const populationTriples = processFeatures(data.populationData.features, "population");
+      allTriples.push(...populationTriples);
     }
 
     if (data.landUseData.features.length > 0) {
-      processFeatures(data.landUseData.features.slice(0, 10), "landuse"); // 最初の5件のみテスト
+      const landUseTriples = processFeatures(data.landUseData.features, "landuse");
+      allTriples.push(...landUseTriples);
     }
 
-    console.log(`✅ Successfully processed ${totalConvertedFeatures} features with ${totalErrors} errors`);
+    if (data.schoolData.features.length > 0) {
+      const schoolTriples = processFeatures(data.schoolData.features, "school");
+      allTriples.push(...schoolTriples);
+    }
 
-    // Store validation
-    console.log("🔍 Validating store after save...");
-    validateStore(store);
+    if (data.medicalData.features.length > 0) {
+      const medicalTriples = processFeatures(data.medicalData.features, "medical");
+      allTriples.push(...medicalTriples);
+    }
+
+    if (data.disasterData.features.length > 0) {
+      const disasterTriples = processFeatures(data.disasterData.features, "disaster");
+      allTriples.push(...disasterTriples);
+    }
+
+    console.log(`✅ Successfully converted ${totalConvertedFeatures} features to ${allTriples.length} triples with ${totalErrors} errors`);
+
+    // RDF4Jにバルクインサート
+    if (allTriples.length > 0) {
+      console.log("🚀 Starting bulk insert to RDF4J...");
+      await bulkInsertTriples(store, allTriples, batchSize);
+      console.log("✅ Bulk insert completed successfully");
+    }
+
+    return allTriples.length;
   } catch (error) {
-    console.error("❌ Error saving data to GeoSPARQL store:", error);
+    console.error("❌ Error saving data to RDF4J store:", error);
     throw error;
   }
 }

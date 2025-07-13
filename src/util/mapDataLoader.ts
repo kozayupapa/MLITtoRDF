@@ -231,16 +231,20 @@ export function createMeshPolygon(meshId: string): number[][] {
 export function createPopulationLayer(data: PopulationMeshData[]): FeatureCollection {
   const features = data.map((mesh): Feature<Polygon> => {
     if (!mesh.coordinates || mesh.coordinates.length === 0) {
+      const fallbackCoords = createMeshPolygon(mesh.MESH_ID);
       return {
         type: "Feature",
         geometry: {
           type: "Polygon",
-          coordinates: [[]],
+          coordinates: [fallbackCoords],
         },
         properties: {
           population: mesh.PT00_2024,
           meshId: mesh.MESH_ID,
           color: getPopulationColor(mesh.PT00_2024),
+          shicode: mesh.SHICODE,
+          population2020: mesh.PTN_2020,
+          population2024: mesh.PTN_2024,
         },
       };
     }
@@ -255,6 +259,9 @@ export function createPopulationLayer(data: PopulationMeshData[]): FeatureCollec
         population: mesh.PT00_2024,
         meshId: mesh.MESH_ID,
         color: getPopulationColor(mesh.PT00_2024),
+        shicode: mesh.SHICODE,
+        population2020: mesh.PTN_2020,
+        population2024: mesh.PTN_2024,
       },
     };
   });
@@ -333,4 +340,60 @@ export function getPopulationColor(population: number): string {
     if (population <= threshold) return color;
   }
   return POPULATION_COLOR_THRESHOLDS[POPULATION_COLOR_THRESHOLDS.length - 1].color;
+}
+
+// 人口データをXMLから読み込み、GeoJSONに変換し、RDF4Jストアに保存する統合関数
+export async function loadPopulationDataToRDF4J(
+  xmlPath: string,
+  rdf4jStore: { baseUrl: string; repositoryId: string },
+  batchSize: number = 1000
+): Promise<{ 
+  populationData: PopulationMeshData[];
+  geoJSON: FeatureCollection;
+  rdfTripleCount: number;
+}> {
+  console.log("🔄 Starting population data processing pipeline...");
+  
+  try {
+    // 1. XMLから人口データを解析
+    console.log("📖 Parsing population XML...");
+    const populationData = await parsePopulationXML(xmlPath);
+    console.log(`✅ Parsed ${populationData.length} population mesh records`);
+    
+    if (populationData.length === 0) {
+      throw new Error("No population data found in XML");
+    }
+    
+    // 2. GeoJSONレイヤーを作成
+    console.log("🗺️ Creating GeoJSON layer...");
+    const geoJSON = createPopulationLayer(populationData);
+    console.log(`✅ Created GeoJSON with ${geoJSON.features.length} features`);
+    
+    // 3. RDF4Jストアに保存
+    console.log("💾 Saving to RDF4J store...");
+    const { saveDataToRDF4J } = await import("./geoSPARQLUtil");
+    
+    // 空のダミーデータで他のコレクションを初期化
+    const emptyCollection = { type: "FeatureCollection" as const, features: [] };
+    
+    const tripleCount = await saveDataToRDF4J(rdf4jStore, {
+      populationData: geoJSON,
+      landUseData: emptyCollection,
+      schoolData: emptyCollection,
+      medicalData: emptyCollection,
+      disasterData: emptyCollection,
+    }, batchSize);
+    
+    console.log(`✅ Population data processing complete. ${tripleCount} triples in store.`);
+    
+    return {
+      populationData,
+      geoJSON,
+      rdfTripleCount: tripleCount,
+    };
+    
+  } catch (error) {
+    console.error("❌ Error in population data processing pipeline:", error);
+    throw error;
+  }
 }
