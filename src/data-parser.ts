@@ -6,8 +6,7 @@
 
 import * as fs from 'fs';
 import { Transform, Readable } from 'stream';
-import StreamArray from 'stream-json/streamers/StreamArray';
-import parser from 'stream-json';
+import StreamValues from 'stream-json/streamers/StreamValues';
 import { createLogger, Logger } from 'winston';
 
 export interface GeoJSONFeature {
@@ -70,8 +69,21 @@ export class GeoJSONStreamParser {
     }
 
     const fileStream = fs.createReadStream(inputFilePath);
-    const parseStream = parser();
-    const streamArray = StreamArray.withParser();
+    const streamValues = StreamValues.withParser();
+
+    // Filter to only process the 'features' array
+    const featureFilter = new Transform({
+      objectMode: true,
+      transform: function(chunk: any, _encoding: string, callback: Function): void {
+        if (chunk.key === 'features' && Array.isArray(chunk.value)) {
+          // Pass through each feature from the features array
+          chunk.value.forEach((feature: any, index: number) => {
+            this.push({ value: feature, key: index });
+          });
+        }
+        callback();
+      }
+    });
 
     // Transform stream to extract and validate features
     const featureTransform = new Transform({
@@ -127,12 +139,12 @@ export class GeoJSONStreamParser {
       this.logger.error('File stream error:', error);
     });
 
-    parseStream.on('error', (error: Error) => {
-      this.logger.error('JSON parser error:', error);
+    streamValues.on('error', (error: Error) => {
+      this.logger.error('Stream values error:', error);
     });
 
-    streamArray.on('error', (error: Error) => {
-      this.logger.error('Stream array error:', error);
+    featureFilter.on('error', (error: Error) => {
+      this.logger.error('Feature filter error:', error);
     });
 
     featureTransform.on('error', (error: Error) => {
@@ -145,8 +157,8 @@ export class GeoJSONStreamParser {
     });
 
     return fileStream
-      .pipe(parseStream)
-      .pipe(streamArray)
+      .pipe(streamValues)
+      .pipe(featureFilter)
       .pipe(featureTransform);
   }
 

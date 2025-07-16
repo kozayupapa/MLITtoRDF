@@ -1,4 +1,4 @@
-import { LAND_USE_COLORS, type PopulationMeshData, type LandUseMeshData, type SchoolFeature, type MedicalFeature } from "@/types/geoData";
+import { LAND_USE_COLORS, type PopulationMeshData, type LandUseMeshData, type SchoolFeature, type MedicalFeature } from "../types/geoData";
 import type { Feature, FeatureCollection, Point, Polygon } from "geojson";
 
 interface SurfaceData {
@@ -16,7 +16,7 @@ export const POPULATION_COLOR_THRESHOLDS = [
   { threshold: 10000, color: "#fd8d3c", label: "10,000人" },
 ] as const;
 
-function parseCurveCoordinates(curve: Element): { curveId: string; coordinates: number[][] } | null {
+function parseCurveCoordinates(curve: any): { curveId: string; coordinates: number[][] } | null {
   const curveId = curve.getAttribute("gml:id");
   if (!curveId) {
     return null;
@@ -31,7 +31,7 @@ function parseCurveCoordinates(curve: Element): { curveId: string; coordinates: 
     .trim()
     .split(/\s+/u)
     .map(Number)
-    .reduce((acc, value, index) => {
+    .reduce((acc: number[][], value: number, index: number) => {
       if (index % 2 === 0) {
         acc.push([0, value]);
       } else {
@@ -43,7 +43,7 @@ function parseCurveCoordinates(curve: Element): { curveId: string; coordinates: 
   return { curveId, coordinates };
 }
 
-function parseSurfaceData(surface: Element, curveCoordinates: Map<string, number[][]>): SurfaceData | null {
+function parseSurfaceData(surface: any, curveCoordinates: Map<string, number[][]>): SurfaceData | null {
   const surfaceId = surface.getAttribute("gml:id");
   if (!surfaceId) {
     return null;
@@ -68,7 +68,7 @@ function parseSurfaceData(surface: Element, curveCoordinates: Map<string, number
   };
 }
 
-function parseMeshData(mesh: Element, surfaceDataMap: Map<string, SurfaceData>): PopulationMeshData | null {
+function parseMeshData(mesh: any, surfaceDataMap: Map<string, SurfaceData>): PopulationMeshData | null {
   const getElementText = (tagName: string): string => {
     const elements = mesh.getElementsByTagName(`ksj:${tagName}`);
     if (elements.length === 0) {
@@ -114,7 +114,7 @@ export async function parsePopulationXML(xmlPath: string): Promise<PopulationMes
     const response = await fetch(xmlPath);
     const xmlText = await response.text();
 
-    const parser = new DOMParser();
+    const parser = new (globalThis as any).DOMParser();
     const xmlDoc = parser.parseFromString(xmlText, "text/xml");
 
     // メッシュの境界情報を取得
@@ -162,8 +162,8 @@ export async function mergeLandUseData(paths: string[]): Promise<LandUseMeshData
     const dataPromises = paths.map((path) => fetch(path).then((res) => res.json()));
     const results = await Promise.all(dataPromises);
 
-    return results.flatMap((result) =>
-      result.features.map((feature: Feature<Polygon>) => ({
+    return results.flatMap((result: any) =>
+      result.features.map((feature: any) => ({
         L03b_001: feature.properties?.L03b_001 || "",
         L03b_002: feature.properties?.L03b_002 || "",
         L03b_003: feature.properties?.L03b_003 || "",
@@ -276,7 +276,7 @@ export function createLandUseLayer(data: LandUseMeshData[]): FeatureCollection {
   return {
     type: "FeatureCollection",
     features: data.map(
-      (mesh): Feature<Polygon> => ({
+      (mesh: any): any => ({
         type: "Feature",
         geometry: {
           type: "Polygon",
@@ -296,7 +296,7 @@ export function createSchoolLayer(data: FeatureCollection<Point, SchoolFeature["
   return {
     type: "FeatureCollection",
     features: data.features.map(
-      (feature): SchoolFeature => ({
+      (feature: any): any => ({
         type: "Feature",
         geometry: feature.geometry,
         properties: {
@@ -317,7 +317,7 @@ export function createMedicalLayer(data: FeatureCollection<Point, MedicalFeature
   return {
     type: "FeatureCollection",
     features: data.features.map(
-      (feature): MedicalFeature => ({
+      (feature: any): any => ({
         type: "Feature",
         geometry: feature.geometry,
         properties: {

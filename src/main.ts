@@ -7,12 +7,11 @@
 
 import { Command } from 'commander';
 import { createLogger, format, transports } from 'winston';
-import * as path from 'path';
 import * as fs from 'fs';
 import { GeoJSONStreamParser, ParsedFeatureData } from './data-parser';
 import { GeoSPARQLTransformer, RDFTriple, TransformationResult } from './geo-transformer';
 import { RDF4JBulkLoader, LoadResult } from './rdf-loader';
-import { parsePopulationXML, createPopulationLayer, loadPopulationDataToRDF } from './util/mapDataLoader';
+import { parsePopulationXML, createPopulationLayer } from './util/mapDataLoader';
 import { saveDataToRDF4J, RDF4JStore } from './util/geoSPARQLUtil';
 
 interface CLIOptions {
@@ -228,7 +227,7 @@ class MLITGeoJSONToRDF4J {
     
     // XML人口データの場合は別の処理パイプラインを使用
     if (this.options.dataType === 'xml-population') {
-      return await this.processXMLPopulationData(loader);
+      return await this.processXMLPopulationData();
     }
     
     // 従来のGeoJSON処理パイプライン
@@ -311,7 +310,7 @@ class MLITGeoJSONToRDF4J {
   /**
    * XML人口データ処理パイプライン
    */
-  private async processXMLPopulationData(loader: RDF4JBulkLoader): Promise<LoadResult | null> {
+  private async processXMLPopulationData(): Promise<LoadResult | null> {
     this.logger.info('Starting XML population data processing pipeline...');
     
     try {

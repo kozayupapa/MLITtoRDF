@@ -4,10 +4,10 @@
  * Handles coordinate reference system transformation from JGD2011 to WGS84
  */
 
-import { geojsonToWKT } from '@terraformer/wkt';
 import proj4 from 'proj4';
 import { Logger } from 'winston';
 import { GeoJSONFeature } from './data-parser';
+import wellknown from 'wellknown';
 import {
   RDF_PREFIXES,
   MLIT_PREDICATES,
@@ -15,7 +15,7 @@ import {
   WGS84_CRS_URI,
   generateMeshIRI,
   generateGeometryIRI,
-  generatePopulationSnapshotIRI
+  generatePopulationSnapshotIRI,
 } from './ontology-config';
 
 export interface TransformerOptions {
@@ -44,21 +44,21 @@ export interface TransformationResult {
 export class GeoSPARQLTransformer {
   private readonly options: TransformerOptions;
   private readonly logger: Logger;
-  
+
   // Define coordinate reference systems
   private readonly jgd2011: string = '+proj=longlat +datum=JGD2011 +no_defs';
   private readonly wgs84: string = '+proj=longlat +datum=WGS84 +no_defs';
 
   constructor(options: TransformerOptions) {
     this.options = options;
-    this.logger = options.logger || console as any;
-    
+    this.logger = options.logger || (console as any);
+
     // Define JGD2011 projection if not already defined
     if (!proj4.defs('JGD2011')) {
       proj4.defs('JGD2011', this.jgd2011);
     }
-    
-    // Define WGS84 projection if not already defined  
+
+    // Define WGS84 projection if not already defined
     if (!proj4.defs('WGS84')) {
       proj4.defs('WGS84', this.wgs84);
     }
@@ -70,7 +70,7 @@ export class GeoSPARQLTransformer {
   public transformFeature(feature: GeoJSONFeature): TransformationResult {
     const { baseUri, includePopulationSnapshots = true } = this.options;
     const triples: RDFTriple[] = [];
-    
+
     const meshId = feature.properties.MESH_ID;
     if (!meshId) {
       throw new Error('Feature missing required MESH_ID property');
@@ -78,43 +78,75 @@ export class GeoSPARQLTransformer {
 
     // Extract year from properties (look for patterns like PT01_2025, PT01_2030, etc.)
     const year = this.extractYearFromProperties(feature.properties);
-    
+
     // Generate IRIs
-    const featureIRI = generateMeshIRI(baseUri, meshId, year);
-    const geometryIRI = generateGeometryIRI(baseUri, meshId, year);
-    
+    const featureIRI = generateMeshIRI(baseUri, meshId, year as string);
+    const geometryIRI = generateGeometryIRI(baseUri, meshId, year as string);
+
     // Add type declarations
     triples.push(
-      this.createTriple(featureIRI, `${RDF_PREFIXES.rdf}type`, `${RDF_PREFIXES.geo}Feature`),
-      this.createTriple(featureIRI, `${RDF_PREFIXES.rdf}type`, MLIT_CLASSES.Mesh),
-      this.createTriple(geometryIRI, `${RDF_PREFIXES.rdf}type`, `${RDF_PREFIXES.geo}Geometry`)
+      this.createTriple(
+        featureIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Feature`
+      ),
+      this.createTriple(
+        featureIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        MLIT_CLASSES.Mesh
+      ),
+      this.createTriple(
+        geometryIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Geometry`
+      )
     );
 
     // Link feature to geometry
     triples.push(
-      this.createTriple(featureIRI, `${RDF_PREFIXES.geo}hasGeometry`, geometryIRI)
+      this.createTriple(
+        featureIRI,
+        `${RDF_PREFIXES.geo}hasGeometry`,
+        geometryIRI
+      )
     );
 
     // Transform and add geometry
     const wktGeometry = this.transformGeometry(feature.geometry);
     triples.push(
-      this.createTriple(geometryIRI, `${RDF_PREFIXES.geo}wktLiteral`, this.createWKTLiteral(wktGeometry))
+      this.createTriple(
+        geometryIRI,
+        `${RDF_PREFIXES.geo}wktLiteral`,
+        this.createWKTLiteral(wktGeometry)
+      )
     );
 
     // Add basic properties
     triples.push(
-      this.createTriple(featureIRI, MLIT_PREDICATES.meshId, this.createStringLiteral(meshId))
+      this.createTriple(
+        featureIRI,
+        MLIT_PREDICATES.meshId,
+        this.createStringLiteral(meshId)
+      )
     );
 
     if (feature.properties.SHICODE) {
       triples.push(
-        this.createTriple(featureIRI, MLIT_PREDICATES.administrativeCode, this.createStringLiteral(feature.properties.SHICODE.toString()))
+        this.createTriple(
+          featureIRI,
+          MLIT_PREDICATES.administrativeCode,
+          this.createStringLiteral(feature.properties.SHICODE.toString())
+        )
       );
     }
 
     if (feature.properties.PTN_2020) {
       triples.push(
-        this.createTriple(featureIRI, MLIT_PREDICATES.totalPopulation2020, this.createIntegerLiteral(feature.properties.PTN_2020))
+        this.createTriple(
+          featureIRI,
+          MLIT_PREDICATES.totalPopulation2020,
+          this.createIntegerLiteral(feature.properties.PTN_2020)
+        )
       );
     }
 
@@ -123,7 +155,7 @@ export class GeoSPARQLTransformer {
     if (includePopulationSnapshots && year) {
       const snapshotIRI = generatePopulationSnapshotIRI(baseUri, meshId, year);
       populationSnapshotIRIs.push(snapshotIRI);
-      
+
       const populationTriples = this.createPopulationSnapshot(
         feature.properties,
         featureIRI,
@@ -137,7 +169,7 @@ export class GeoSPARQLTransformer {
       triples,
       featureIRI,
       geometryIRI,
-      populationSnapshotIRIs
+      populationSnapshotIRIs,
     };
   }
 
@@ -148,9 +180,9 @@ export class GeoSPARQLTransformer {
     try {
       // Transform coordinates from JGD2011 to WGS84
       const transformedGeometry = this.transformCoordinates(geometry);
-      
+
       // Convert to WKT
-      const wkt = geojsonToWKT(transformedGeometry);
+      const wkt = wellknown.stringify(transformedGeometry);
       return wkt;
     } catch (error) {
       this.logger.error('Error transforming geometry:', error);
@@ -165,7 +197,9 @@ export class GeoSPARQLTransformer {
     const transformedGeometry = { ...geometry };
 
     if (geometry.coordinates) {
-      transformedGeometry.coordinates = this.transformCoordinateArray(geometry.coordinates);
+      transformedGeometry.coordinates = this.transformCoordinateArray(
+        geometry.coordinates
+      );
     }
 
     return transformedGeometry;
@@ -177,17 +211,20 @@ export class GeoSPARQLTransformer {
   private transformCoordinateArray(coordinates: any): any {
     if (Array.isArray(coordinates)) {
       // Check if this is a coordinate pair [lng, lat]
-      if (coordinates.length === 2 && 
-          typeof coordinates[0] === 'number' && 
-          typeof coordinates[1] === 'number') {
-        
+      if (
+        coordinates.length === 2 &&
+        typeof coordinates[0] === 'number' &&
+        typeof coordinates[1] === 'number'
+      ) {
         // Transform single coordinate pair
         const [lng, lat] = coordinates;
         const transformed = proj4('JGD2011', 'WGS84', [lng, lat]);
         return [transformed[0], transformed[1]];
       } else {
         // Recursively transform nested arrays
-        return coordinates.map((coord: any) => this.transformCoordinateArray(coord));
+        return coordinates.map((coord: any) =>
+          this.transformCoordinateArray(coord)
+        );
       }
     }
     return coordinates;
@@ -206,9 +243,21 @@ export class GeoSPARQLTransformer {
 
     // Add type and basic properties
     triples.push(
-      this.createTriple(snapshotIRI, `${RDF_PREFIXES.rdf}type`, MLIT_CLASSES.PopulationSnapshot),
-      this.createTriple(featureIRI, MLIT_PREDICATES.hasPopulationData, snapshotIRI),
-      this.createTriple(snapshotIRI, MLIT_PREDICATES.populationYear, this.createIntegerLiteral(parseInt(year)))
+      this.createTriple(
+        snapshotIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        MLIT_CLASSES.PopulationSnapshot
+      ),
+      this.createTriple(
+        featureIRI,
+        MLIT_PREDICATES.hasPopulationData,
+        snapshotIRI
+      ),
+      this.createTriple(
+        snapshotIRI,
+        MLIT_PREDICATES.populationYear,
+        this.createIntegerLiteral(parseInt(year))
+      )
     );
 
     // Map age group properties
@@ -233,7 +282,7 @@ export class GeoSPARQLTransformer {
       { property: `PT18_${year}`, predicate: MLIT_PREDICATES.ageGroup85_89 },
       { property: `PT19_${year}`, predicate: MLIT_PREDICATES.ageGroup90_94 },
       { property: `PT20_${year}`, predicate: MLIT_PREDICATES.ageGroup95_99 },
-      { property: `PT21_${year}`, predicate: MLIT_PREDICATES.ageGroup100Plus }
+      { property: `PT21_${year}`, predicate: MLIT_PREDICATES.ageGroup100Plus },
     ];
 
     // Add age group data
@@ -241,7 +290,11 @@ export class GeoSPARQLTransformer {
       const value = properties[mapping.property];
       if (value !== undefined && value !== null) {
         triples.push(
-          this.createTriple(snapshotIRI, mapping.predicate, this.createIntegerLiteral(value))
+          this.createTriple(
+            snapshotIRI,
+            mapping.predicate,
+            this.createIntegerLiteral(value)
+          )
         );
       }
     }
@@ -253,14 +306,18 @@ export class GeoSPARQLTransformer {
       { property: `RTC_${year}`, predicate: MLIT_PREDICATES.ratioFemale },
       { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioAge0_14 },
       { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioAge15_64 },
-      { property: `RTF_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus }
+      { property: `RTF_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus },
     ];
 
     for (const mapping of ratioMappings) {
       const value = properties[mapping.property];
       if (value !== undefined && value !== null) {
         triples.push(
-          this.createTriple(snapshotIRI, mapping.predicate, this.createDoubleLiteral(value))
+          this.createTriple(
+            snapshotIRI,
+            mapping.predicate,
+            this.createDoubleLiteral(value)
+          )
         );
       }
     }
@@ -274,7 +331,7 @@ export class GeoSPARQLTransformer {
   private extractYearFromProperties(properties: any): string | null {
     // Look for population data properties with year suffixes
     const yearPattern = /PT\d{2}_(\d{4})/;
-    
+
     for (const key of Object.keys(properties)) {
       const match = key.match(yearPattern);
       if (match) {
@@ -288,7 +345,11 @@ export class GeoSPARQLTransformer {
   /**
    * Create an RDF triple
    */
-  private createTriple(subject: string, predicate: string, object: string): RDFTriple {
+  private createTriple(
+    subject: string,
+    predicate: string,
+    object: string
+  ): RDFTriple {
     return { subject, predicate, object };
   }
 
@@ -330,6 +391,6 @@ export function createGeoSPARQLTransformer(
 ): GeoSPARQLTransformer {
   return new GeoSPARQLTransformer({
     baseUri,
-    ...options
+    ...options,
   });
 }

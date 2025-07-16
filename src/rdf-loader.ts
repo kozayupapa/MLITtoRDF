@@ -53,8 +53,7 @@ export class RDF4JBulkLoader {
     
     // Initialize SPARQL endpoint fetcher
     this.fetcher = new SparqlEndpointFetcher({
-      timeout: options.timeout || 30000,
-      retry: options.maxRetries || 3
+      timeout: options.timeout || 30000
     });
 
     this.logger.info(`Initialized RDF4J loader for endpoint: ${this.endpointUrl}`);
@@ -298,12 +297,17 @@ ASK { ?s ?p ?o }`;
       
 SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }`;
 
-      const bindings = await this.fetcher.fetchBindings(
+      const bindingsStream = await this.fetcher.fetchBindings(
         this.endpointUrl.replace('/statements', ''), 
         query
       );
 
-      const count = bindings.length > 0 ? parseInt(bindings[0].count.value) : 0;
+      const bindings = [];
+      for await (const binding of bindingsStream) {
+        bindings.push(binding);
+      }
+
+      const count = bindings.length > 0 ? parseInt((bindings[0] as any).count.value) : 0;
       return { tripleCount: count };
     } catch (error) {
       this.logger.error(`Failed to get repository stats: ${error}`);
