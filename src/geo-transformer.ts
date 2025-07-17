@@ -145,24 +145,29 @@ export class GeoSPARQLTransformer {
         this.createTriple(
           featureIRI,
           MLIT_PREDICATES.totalPopulation2020,
-          this.createIntegerLiteral(feature.properties.PTN_2020)
+          this.createDoubleLiteral(feature.properties.PTN_2020)
         )
       );
     }
 
     // Add population snapshots if requested
     const populationSnapshotIRIs: string[] = [];
-    if (includePopulationSnapshots && year) {
-      const snapshotIRI = generatePopulationSnapshotIRI(baseUri, meshId, year);
-      populationSnapshotIRIs.push(snapshotIRI);
+    if (includePopulationSnapshots) {
+      // Extract all available years from properties
+      const availableYears = this.extractAllYearsFromProperties(feature.properties);
+      
+      for (const year of availableYears) {
+        const snapshotIRI = generatePopulationSnapshotIRI(baseUri, meshId, year);
+        populationSnapshotIRIs.push(snapshotIRI);
 
-      const populationTriples = this.createPopulationSnapshot(
-        feature.properties,
-        featureIRI,
-        snapshotIRI,
-        year
-      );
-      triples.push(...populationTriples);
+        const populationTriples = this.createPopulationSnapshot(
+          feature.properties,
+          featureIRI,
+          snapshotIRI,
+          year
+        );
+        triples.push(...populationTriples);
+      }
     }
 
     return {
@@ -260,6 +265,18 @@ export class GeoSPARQLTransformer {
       )
     );
 
+    // Add total population for this year
+    const totalPopulation = properties[`PTN_${year}`];
+    if (totalPopulation !== undefined && totalPopulation !== null) {
+      triples.push(
+        this.createTriple(
+          snapshotIRI,
+          MLIT_PREDICATES.totalPopulation,
+          this.createDoubleLiteral(totalPopulation)
+        )
+      );
+    }
+
     // Map age group properties
     const ageGroupMappings = [
       { property: `PT01_${year}`, predicate: MLIT_PREDICATES.ageGroup0_4 },
@@ -293,7 +310,29 @@ export class GeoSPARQLTransformer {
           this.createTriple(
             snapshotIRI,
             mapping.predicate,
-            this.createIntegerLiteral(value)
+            this.createDoubleLiteral(value)
+          )
+        );
+      }
+    }
+
+    // Add age category data (PTA, PTB, PTC, PTD, PTE)
+    const ageCategoryMappings = [
+      { property: `PTA_${year}`, predicate: MLIT_PREDICATES.ageCategory0_14 },
+      { property: `PTB_${year}`, predicate: MLIT_PREDICATES.ageCategory15_64 },
+      { property: `PTC_${year}`, predicate: MLIT_PREDICATES.ageCategory65Plus },
+      { property: `PTD_${year}`, predicate: MLIT_PREDICATES.ageCategoryWorking },
+      { property: `PTE_${year}`, predicate: MLIT_PREDICATES.ageCategoryElderly },
+    ];
+
+    for (const mapping of ageCategoryMappings) {
+      const value = properties[mapping.property];
+      if (value !== undefined && value !== null) {
+        triples.push(
+          this.createTriple(
+            snapshotIRI,
+            mapping.predicate,
+            this.createDoubleLiteral(value)
           )
         );
       }
@@ -301,12 +340,11 @@ export class GeoSPARQLTransformer {
 
     // Add ratio data if available
     const ratioMappings = [
-      { property: `RTA_${year}`, predicate: MLIT_PREDICATES.ratioTotal },
-      { property: `RTB_${year}`, predicate: MLIT_PREDICATES.ratioMale },
-      { property: `RTC_${year}`, predicate: MLIT_PREDICATES.ratioFemale },
-      { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioAge0_14 },
-      { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioAge15_64 },
-      { property: `RTF_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus },
+      { property: `RTA_${year}`, predicate: MLIT_PREDICATES.ratioAge0_14 },
+      { property: `RTB_${year}`, predicate: MLIT_PREDICATES.ratioAge15_64 },
+      { property: `RTC_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus },
+      { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioWorking },
+      { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioElderly },
     ];
 
     for (const mapping of ratioMappings) {
@@ -326,20 +364,29 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Extract year from feature properties
+   * Extract all years from feature properties
    */
-  private extractYearFromProperties(properties: any): string | null {
+  private extractAllYearsFromProperties(properties: any): string[] {
     // Look for population data properties with year suffixes
-    const yearPattern = /PT\d{2}_(\d{4})/;
+    const yearPattern = /PTN_(\d{4})/;
+    const years = new Set<string>();
 
     for (const key of Object.keys(properties)) {
       const match = key.match(yearPattern);
       if (match) {
-        return match[1];
+        years.add(match[1]);
       }
     }
 
-    return null;
+    return Array.from(years).sort();
+  }
+
+  /**
+   * Extract year from feature properties (legacy method)
+   */
+  private extractYearFromProperties(properties: any): string | null {
+    const years = this.extractAllYearsFromProperties(properties);
+    return years.length > 0 ? years[0] : null;
   }
 
   /**

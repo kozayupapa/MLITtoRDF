@@ -8,14 +8,21 @@
 import { Command } from 'commander';
 import { createLogger, format, transports } from 'winston';
 import * as fs from 'fs';
-import { GeoJSONStreamParser, ParsedFeatureData } from './data-parser';
-import { GeoSPARQLTransformer, RDFTriple, TransformationResult } from './geo-transformer';
+import { GeoJSONSyncParser } from './data-parser';
+import {
+  GeoSPARQLTransformer,
+  RDFTriple,
+  TransformationResult,
+} from './geo-transformer';
 import { RDF4JBulkLoader, LoadResult } from './rdf-loader';
-import { parsePopulationXML, createPopulationLayer } from './util/mapDataLoader';
+import {
+  parsePopulationXML,
+  createPopulationLayer,
+} from './util/mapDataLoader';
 import { saveDataToRDF4J, RDF4JStore } from './util/geoSPARQLUtil';
 
 interface CLIOptions {
-  filePath: string;
+  filePaths: string[];
   rdf4jEndpoint: string;
   repositoryId: string;
   baseUri: string;
@@ -59,16 +66,13 @@ class MLITGeoJSONToRDF4J {
       ),
       transports: [
         new transports.Console({
-          format: format.combine(
-            format.colorize(),
-            format.simple()
-          )
+          format: format.combine(format.colorize(), format.simple()),
         }),
         new transports.File({
           filename: 'mlit-to-rdf4j.log',
-          format: format.json()
-        })
-      ]
+          format: format.json(),
+        }),
+      ],
     });
   }
 
@@ -77,7 +81,7 @@ class MLITGeoJSONToRDF4J {
    */
   public async execute(): Promise<void> {
     const startTime = Date.now();
-    
+
     try {
       this.logger.info('Starting MLIT GeoJSON to RDF4J conversion');
       this.logConfiguration();
@@ -100,7 +104,6 @@ class MLITGeoJSONToRDF4J {
 
       // Log final results
       this.logResults(result, Date.now() - startTime);
-
     } catch (error) {
       this.logger.error('Pipeline execution failed:', error);
       process.exit(1);
@@ -111,33 +114,55 @@ class MLITGeoJSONToRDF4J {
    * Validate input parameters and files
    */
   private async validateInputs(): Promise<void> {
-    const { filePath, rdf4jEndpoint, repositoryId, baseUri } = this.options;
+    const { filePaths, rdf4jEndpoint, repositoryId, baseUri } = this.options;
 
-    // Check if input file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`Input file does not exist: ${filePath}`);
+    // Check if input files exist
+    for (const filePath of filePaths) {
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`Input file does not exist: ${filePath}`);
+      }
     }
 
-    // Validate file extension and determine data type
-    const fileExt = filePath.toLowerCase();
+    // Validate file extensions and determine data type
     if (this.options.dataType === 'auto') {
-      if (fileExt.endsWith('.xml')) {
+      // Check the first file to determine data type
+      const firstFile = filePaths[0].toLowerCase();
+      if (firstFile.endsWith('.xml')) {
         this.options.dataType = 'xml-population';
         this.logger.info('Auto-detected XML population data format');
-      } else if (fileExt.endsWith('.geojson') || fileExt.endsWith('.json')) {
+      } else if (
+        firstFile.endsWith('.geojson') ||
+        firstFile.endsWith('.json')
+      ) {
         this.options.dataType = 'geojson';
         this.logger.info('Auto-detected GeoJSON data format');
       } else {
-        this.logger.warn('Unknown file extension, defaulting to GeoJSON processing');
+        this.logger.warn(
+          'Unknown file extension, defaulting to GeoJSON processing'
+        );
         this.options.dataType = 'geojson';
       }
     }
 
-    // Validate file extension based on data type
-    if (this.options.dataType === 'xml-population' && !fileExt.endsWith('.xml')) {
-      this.logger.warn('XML population data type specified but file does not have .xml extension');
-    } else if (this.options.dataType === 'geojson' && !fileExt.endsWith('.geojson') && !fileExt.endsWith('.json')) {
-      this.logger.warn('GeoJSON data type specified but file does not have .geojson or .json extension');
+    // Validate file extensions based on data type
+    for (const filePath of filePaths) {
+      const fileExt = filePath.toLowerCase();
+      if (
+        this.options.dataType === 'xml-population' &&
+        !fileExt.endsWith('.xml')
+      ) {
+        this.logger.warn(
+          `XML population data type specified but file ${filePath} does not have .xml extension`
+        );
+      } else if (
+        this.options.dataType === 'geojson' &&
+        !fileExt.endsWith('.geojson') &&
+        !fileExt.endsWith('.json')
+      ) {
+        this.logger.warn(
+          `GeoJSON data type specified but file ${filePath} does not have .geojson or .json extension`
+        );
+      }
     }
 
     // Validate URLs
@@ -164,12 +189,12 @@ class MLITGeoJSONToRDF4J {
   /**
    * Create and configure the GeoJSON parser
    */
-  private createParser(): GeoJSONStreamParser {
-    return new GeoJSONStreamParser({
-      inputFilePath: this.options.filePath,
+  private createParser(): GeoJSONSyncParser {
+    return new GeoJSONSyncParser({
+      inputFilePaths: this.options.filePaths,
       maxFeatures: this.options.maxFeatures,
       skipFeatures: this.options.skipFeatures,
-      logger: this.logger
+      logger: this.logger,
     });
   }
 
@@ -180,7 +205,7 @@ class MLITGeoJSONToRDF4J {
     return new GeoSPARQLTransformer({
       baseUri: this.options.baseUri,
       includePopulationSnapshots: this.options.includePopulationSnapshots,
-      logger: this.logger
+      logger: this.logger,
     });
   }
 
@@ -194,7 +219,7 @@ class MLITGeoJSONToRDF4J {
       batchSize: this.options.batchSize,
       logger: this.logger,
       timeout: 60000, // 60 seconds
-      maxRetries: 3
+      maxRetries: 3,
     });
   }
 
@@ -203,7 +228,7 @@ class MLITGeoJSONToRDF4J {
    */
   private async testRDF4JConnection(loader: RDF4JBulkLoader): Promise<void> {
     this.logger.info('Testing RDF4J server connection...');
-    
+
     const isConnected = await loader.testConnection();
     if (!isConnected) {
       throw new Error('Failed to connect to RDF4J server');
@@ -212,7 +237,9 @@ class MLITGeoJSONToRDF4J {
     // Get repository statistics
     const stats = await loader.getRepositoryStats();
     if (stats.tripleCount >= 0) {
-      this.logger.info(`Repository currently contains ${stats.tripleCount} triples`);
+      this.logger.info(
+        `Repository currently contains ${stats.tripleCount} triples`
+      );
     }
   }
 
@@ -220,91 +247,97 @@ class MLITGeoJSONToRDF4J {
    * Main data processing pipeline
    */
   private async processData(
-    parser: GeoJSONStreamParser,
+    parser: GeoJSONSyncParser,
     transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader
   ): Promise<LoadResult | null> {
-    
     // XML人口データの場合は別の処理パイプラインを使用
     if (this.options.dataType === 'xml-population') {
       return await this.processXMLPopulationData();
     }
-    
-    // 従来のGeoJSON処理パイプライン
-    const featureStream = parser.createFeatureStream();
+
+    // 同期GeoJSON処理パイプライン
+    this.logger.info('Starting data processing pipeline...');
+
     const allTriples: RDFTriple[] = [];
     let processedFeatures = 0;
     let transformationErrors = 0;
 
-    this.logger.info('Starting data processing pipeline...');
+    try {
+      // Parse all features synchronously
+      const parsedFeatures = parser.parseAllFeatures();
+      this.logger.info(
+        `Parsed ${parsedFeatures.length} features from ${this.options.filePaths.length} files`
+      );
 
-    return new Promise((resolve, reject) => {
-      featureStream.on('data', (data: ParsedFeatureData) => {
+      // Transform each feature to RDF triples
+      for (const data of parsedFeatures) {
         try {
           // Transform GeoJSON feature to RDF triples
-          const result: TransformationResult = transformer.transformFeature(data.feature);
+          const result: TransformationResult = transformer.transformFeature(
+            data.feature
+          );
           allTriples.push(...result.triples);
           processedFeatures++;
 
           // Log progress periodically
           if (processedFeatures % 1000 === 0) {
-            this.logger.info(`Transformed ${processedFeatures} features, generated ${allTriples.length} triples`);
+            this.logger.info(
+              `Transformed ${processedFeatures} features, generated ${allTriples.length} triples`
+            );
           }
-
         } catch (error) {
           transformationErrors++;
-          this.logger.error(`Failed to transform feature ${data.featureIndex}:`, error);
-          
+          this.logger.error(
+            `Failed to transform feature ${data.featureIndex} from file ${data.filePath}:`,
+            error
+          );
+
           // Continue processing unless too many errors
           if (transformationErrors > 100) {
-            reject(new Error(`Too many transformation errors (${transformationErrors}), aborting`));
-            return;
+            throw new Error(
+              `Too many transformation errors (${transformationErrors}), aborting`
+            );
           }
         }
-      });
+      }
 
-      featureStream.on('end', async () => {
-        try {
-          this.logger.info(`Transformation completed. ${processedFeatures} features processed, ${allTriples.length} triples generated`);
-          
-          if (transformationErrors > 0) {
-            this.logger.warn(`${transformationErrors} features failed transformation`);
-          }
+      this.logger.info(
+        `Transformation completed. ${processedFeatures} features processed, ${allTriples.length} triples generated`
+      );
 
-          if (allTriples.length === 0) {
-            this.logger.warn('No triples generated, skipping RDF4J upload');
-            resolve(null);
-            return;
-          }
+      if (transformationErrors > 0) {
+        this.logger.warn(
+          `${transformationErrors} features failed transformation`
+        );
+      }
 
-          // Load triples to RDF4J (unless dry run)
-          let result: LoadResult | null = null;
-          if (!this.options.dryRun) {
-            this.logger.info('Starting RDF4J bulk load...');
-            result = await loader.loadTriples(allTriples);
-          } else {
-            this.logger.info('Dry run mode - skipping RDF4J upload');
-            result = {
-              totalTriples: allTriples.length,
-              totalBatches: Math.ceil(allTriples.length / this.options.batchSize),
-              totalTime: 0,
-              averageBatchTime: 0,
-              errors: []
-            };
-          }
+      if (allTriples.length === 0) {
+        this.logger.warn('No triples generated, skipping RDF4J upload');
+        return null;
+      }
 
-          resolve(result);
+      // Load triples to RDF4J (unless dry run)
+      let result: LoadResult | null = null;
+      if (!this.options.dryRun) {
+        this.logger.info('Starting RDF4J bulk load...');
+        result = await loader.loadTriples(allTriples);
+      } else {
+        this.logger.info('Dry run mode - skipping RDF4J upload');
+        result = {
+          totalTriples: allTriples.length,
+          totalBatches: Math.ceil(allTriples.length / this.options.batchSize),
+          totalTime: 0,
+          averageBatchTime: 0,
+          errors: [],
+        };
+      }
 
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      featureStream.on('error', (error: Error) => {
-        this.logger.error('Stream processing error:', error);
-        reject(error);
-      });
-    });
+      return result;
+    } catch (error) {
+      this.logger.error('Data processing error:', error);
+      throw error;
+    }
   }
 
   /**
@@ -312,18 +345,22 @@ class MLITGeoJSONToRDF4J {
    */
   private async processXMLPopulationData(): Promise<LoadResult | null> {
     this.logger.info('Starting XML population data processing pipeline...');
-    
+
     try {
       // RDF4JStore インターフェースを作成
       const rdf4jStore: RDF4JStore = {
         baseUrl: this.options.rdf4jEndpoint,
-        repositoryId: this.options.repositoryId
+        repositoryId: this.options.repositoryId,
       };
 
       // 人口データをXMLから読み込み、GeoJSONに変換
       this.logger.info('Parsing XML population data...');
-      const populationData = await parsePopulationXML(this.options.filePath);
-      this.logger.info(`✅ Parsed ${populationData.length} population mesh records`);
+      const populationData = await parsePopulationXML(
+        this.options.filePaths[0]
+      );
+      this.logger.info(
+        `✅ Parsed ${populationData.length} population mesh records`
+      );
 
       if (populationData.length === 0) {
         this.logger.warn('No population data found in XML file');
@@ -331,39 +368,55 @@ class MLITGeoJSONToRDF4J {
       }
 
       // maxFeatures制限を適用
-      const limitedData = this.options.maxFeatures 
-        ? populationData.slice(this.options.skipFeatures || 0, (this.options.skipFeatures || 0) + this.options.maxFeatures)
+      const limitedData = this.options.maxFeatures
+        ? populationData.slice(
+            this.options.skipFeatures || 0,
+            (this.options.skipFeatures || 0) + this.options.maxFeatures
+          )
         : populationData.slice(this.options.skipFeatures || 0);
 
-      this.logger.info(`Processing ${limitedData.length} population records (after limits)`);
+      this.logger.info(
+        `Processing ${limitedData.length} population records (after limits)`
+      );
 
       // GeoJSONに変換
       const geoJSON = createPopulationLayer(limitedData);
-      this.logger.info(`✅ Created GeoJSON with ${geoJSON.features.length} features`);
+      this.logger.info(
+        `✅ Created GeoJSON with ${geoJSON.features.length} features`
+      );
 
       if (this.options.dryRun) {
         this.logger.info('Dry run mode - skipping RDF4J upload');
         return {
           totalTriples: geoJSON.features.length * 10, // 推定値
-          totalBatches: Math.ceil(geoJSON.features.length / this.options.batchSize),
+          totalBatches: Math.ceil(
+            geoJSON.features.length / this.options.batchSize
+          ),
           totalTime: 0,
           averageBatchTime: 0,
-          errors: []
+          errors: [],
         };
       }
 
       // RDF4Jに保存
       this.logger.info('Saving population data to RDF4J...');
       const startTime = Date.now();
-      
-      const emptyCollection = { type: "FeatureCollection" as const, features: [] };
-      const tripleCount = await saveDataToRDF4J(rdf4jStore, {
-        populationData: geoJSON,
-        landUseData: emptyCollection,
-        schoolData: emptyCollection,
-        medicalData: emptyCollection,
-        disasterData: emptyCollection,
-      }, this.options.batchSize);
+
+      const emptyCollection = {
+        type: 'FeatureCollection' as const,
+        features: [],
+      };
+      const tripleCount = await saveDataToRDF4J(
+        rdf4jStore,
+        {
+          populationData: geoJSON,
+          landUseData: emptyCollection,
+          schoolData: emptyCollection,
+          medicalData: emptyCollection,
+          disasterData: emptyCollection,
+        },
+        this.options.batchSize
+      );
 
       const totalTime = Date.now() - startTime;
 
@@ -373,10 +426,10 @@ class MLITGeoJSONToRDF4J {
         totalTriples: tripleCount,
         totalBatches: Math.ceil(tripleCount / this.options.batchSize),
         totalTime,
-        averageBatchTime: totalTime / Math.ceil(tripleCount / this.options.batchSize),
-        errors: []
+        averageBatchTime:
+          totalTime / Math.ceil(tripleCount / this.options.batchSize),
+        errors: [],
       };
-
     } catch (error) {
       this.logger.error('XML population data processing failed:', error);
       throw error;
@@ -388,15 +441,19 @@ class MLITGeoJSONToRDF4J {
    */
   private logConfiguration(): void {
     this.logger.info('Configuration:');
-    this.logger.info(`  Input file: ${this.options.filePath}`);
+    this.logger.info(`  Input files: ${this.options.filePaths.join(', ')}`);
     this.logger.info(`  Data type: ${this.options.dataType}`);
     this.logger.info(`  RDF4J endpoint: ${this.options.rdf4jEndpoint}`);
     this.logger.info(`  Repository ID: ${this.options.repositoryId}`);
     this.logger.info(`  Base URI: ${this.options.baseUri}`);
     this.logger.info(`  Batch size: ${this.options.batchSize}`);
-    this.logger.info(`  Max features: ${this.options.maxFeatures || 'unlimited'}`);
+    this.logger.info(
+      `  Max features: ${this.options.maxFeatures || 'unlimited'}`
+    );
     this.logger.info(`  Skip features: ${this.options.skipFeatures || 0}`);
-    this.logger.info(`  Include population snapshots: ${this.options.includePopulationSnapshots}`);
+    this.logger.info(
+      `  Include population snapshots: ${this.options.includePopulationSnapshots}`
+    );
     this.logger.info(`  Test connection: ${this.options.testConnection}`);
     this.logger.info(`  Dry run: ${this.options.dryRun}`);
   }
@@ -408,14 +465,18 @@ class MLITGeoJSONToRDF4J {
     this.logger.info('='.repeat(50));
     this.logger.info('EXECUTION SUMMARY');
     this.logger.info('='.repeat(50));
-    this.logger.info(`Total execution time: ${totalTime}ms (${(totalTime / 1000).toFixed(2)}s)`);
-    
+    this.logger.info(
+      `Total execution time: ${totalTime}ms (${(totalTime / 1000).toFixed(2)}s)`
+    );
+
     if (result) {
       this.logger.info(`Triples processed: ${result.totalTriples}`);
       this.logger.info(`Batches processed: ${result.totalBatches}`);
       this.logger.info(`RDF4J load time: ${result.totalTime}ms`);
-      this.logger.info(`Average batch time: ${result.averageBatchTime.toFixed(2)}ms`);
-      
+      this.logger.info(
+        `Average batch time: ${result.averageBatchTime.toFixed(2)}ms`
+      );
+
       if (result.errors.length > 0) {
         this.logger.warn(`Errors encountered: ${result.errors.length}`);
         result.errors.forEach((error, index) => {
@@ -438,22 +499,65 @@ async function main(): Promise<void> {
 
   program
     .name('mlit-geojson-to-rdf4j')
-    .description('Convert MLIT GeoJSON data to GeoSPARQL RDF and load into RDF4J server')
+    .description(
+      'Convert MLIT GeoJSON data to GeoSPARQL RDF and load into RDF4J server'
+    )
     .version('1.0.0');
 
   program
-    .requiredOption('--filePath <path>', 'Path to the input data file (GeoJSON or XML)')
-    .requiredOption('--rdf4jEndpoint <url>', 'RDF4J server endpoint URL (e.g., http://localhost:8080/rdf4j-server)')
+    .requiredOption(
+      '--filePaths <paths...>',
+      'Paths to the input data files (GeoJSON or XML)'
+    )
+    .requiredOption(
+      '--rdf4jEndpoint <url>',
+      'RDF4J server endpoint URL (e.g., http://localhost:8080/rdf4j-server)'
+    )
     .requiredOption('--repositoryId <id>', 'RDF4J repository identifier')
-    .option('--dataType <type>', 'Input data type: geojson, xml-population, or auto', 'auto')
-    .option('--baseUri <uri>', 'Base URI for generated RDF resources', 'http://example.org/mlit/')
-    .option('--batchSize <size>', 'Number of triples per batch for RDF4J upload', '1000')
-    .option('--maxFeatures <count>', 'Maximum number of features to process (for testing)')
-    .option('--skipFeatures <count>', 'Number of features to skip at the beginning', '0')
-    .option('--logLevel <level>', 'Logging level (error, warn, info, debug)', 'info')
-    .option('--testConnection', 'Test RDF4J connection before processing', false)
-    .option('--dryRun', 'Parse and transform data but do not upload to RDF4J', false)
-    .option('--includePopulationSnapshots', 'Include detailed population snapshot data', true);
+    .option(
+      '--dataType <type>',
+      'Input data type: geojson, xml-population, or auto',
+      'auto'
+    )
+    .option(
+      '--baseUri <uri>',
+      'Base URI for generated RDF resources',
+      'http://example.org/mlit/'
+    )
+    .option(
+      '--batchSize <size>',
+      'Number of triples per batch for RDF4J upload',
+      '1000'
+    )
+    .option(
+      '--maxFeatures <count>',
+      'Maximum number of features to process (for testing)'
+    )
+    .option(
+      '--skipFeatures <count>',
+      'Number of features to skip at the beginning',
+      '0'
+    )
+    .option(
+      '--logLevel <level>',
+      'Logging level (error, warn, info, debug)',
+      'info'
+    )
+    .option(
+      '--testConnection',
+      'Test RDF4J connection before processing',
+      false
+    )
+    .option(
+      '--dryRun',
+      'Parse and transform data but do not upload to RDF4J',
+      false
+    )
+    .option(
+      '--includePopulationSnapshots',
+      'Include detailed population snapshot data',
+      true
+    );
 
   program.parse();
 
@@ -487,7 +591,11 @@ async function main(): Promise<void> {
   // Validate data type
   const validDataTypes = ['geojson', 'xml-population', 'auto'];
   if (!validDataTypes.includes(options.dataType)) {
-    console.error(`Invalid data type: ${options.dataType}. Must be one of: ${validDataTypes.join(', ')}`);
+    console.error(
+      `Invalid data type: ${
+        options.dataType
+      }. Must be one of: ${validDataTypes.join(', ')}`
+    );
     process.exit(1);
   }
 

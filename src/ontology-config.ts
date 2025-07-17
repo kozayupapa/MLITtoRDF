@@ -16,6 +16,7 @@ export interface MLITPredicates {
   readonly administrativeCode: string;
   readonly prefectureCode: string;
   readonly totalPopulation2020: string;
+  readonly totalPopulation: string;
   readonly hasPopulationData: string;
   readonly populationYear: string;
   readonly ageGroup0_4: string;
@@ -39,12 +40,16 @@ export interface MLITPredicates {
   readonly ageGroup90_94: string;
   readonly ageGroup95_99: string;
   readonly ageGroup100Plus: string;
-  readonly ratioTotal: string;
-  readonly ratioMale: string;
-  readonly ratioFemale: string;
+  readonly ageCategory0_14: string;
+  readonly ageCategory15_64: string;
+  readonly ageCategory65Plus: string;
+  readonly ageCategoryWorking: string;
+  readonly ageCategoryElderly: string;
   readonly ratioAge0_14: string;
   readonly ratioAge15_64: string;
   readonly ratioAge65Plus: string;
+  readonly ratioWorking: string;
+  readonly ratioElderly: string;
 }
 
 export interface MLITClasses {
@@ -66,6 +71,7 @@ export const MLIT_PREDICATES: MLITPredicates = {
   administrativeCode: `${RDF_PREFIXES.mlit}administrativeCode`,
   prefectureCode: `${RDF_PREFIXES.mlit}prefectureCode`,
   totalPopulation2020: `${RDF_PREFIXES.mlit}totalPopulation2020`,
+  totalPopulation: `${RDF_PREFIXES.mlit}totalPopulation`,
   hasPopulationData: `${RDF_PREFIXES.mlit}hasPopulationData`,
   populationYear: `${RDF_PREFIXES.mlit}populationYear`,
   ageGroup0_4: `${RDF_PREFIXES.mlit}ageGroup0_4`,
@@ -89,12 +95,16 @@ export const MLIT_PREDICATES: MLITPredicates = {
   ageGroup90_94: `${RDF_PREFIXES.mlit}ageGroup90_94`,
   ageGroup95_99: `${RDF_PREFIXES.mlit}ageGroup95_99`,
   ageGroup100Plus: `${RDF_PREFIXES.mlit}ageGroup100Plus`,
-  ratioTotal: `${RDF_PREFIXES.mlit}ratioTotal`,
-  ratioMale: `${RDF_PREFIXES.mlit}ratioMale`,
-  ratioFemale: `${RDF_PREFIXES.mlit}ratioFemale`,
+  ageCategory0_14: `${RDF_PREFIXES.mlit}ageCategory0_14`,
+  ageCategory15_64: `${RDF_PREFIXES.mlit}ageCategory15_64`,
+  ageCategory65Plus: `${RDF_PREFIXES.mlit}ageCategory65Plus`,
+  ageCategoryWorking: `${RDF_PREFIXES.mlit}ageCategoryWorking`,
+  ageCategoryElderly: `${RDF_PREFIXES.mlit}ageCategoryElderly`,
   ratioAge0_14: `${RDF_PREFIXES.mlit}ratioAge0_14`,
   ratioAge15_64: `${RDF_PREFIXES.mlit}ratioAge15_64`,
-  ratioAge65Plus: `${RDF_PREFIXES.mlit}ratioAge65Plus`
+  ratioAge65Plus: `${RDF_PREFIXES.mlit}ratioAge65Plus`,
+  ratioWorking: `${RDF_PREFIXES.mlit}ratioWorking`,
+  ratioElderly: `${RDF_PREFIXES.mlit}ratioElderly`
 } as const;
 
 export const MLIT_CLASSES: MLITClasses = {
