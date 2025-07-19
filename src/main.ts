@@ -33,7 +33,7 @@ interface CLIOptions {
   testConnection: boolean;
   dryRun: boolean;
   includePopulationSnapshots: boolean;
-  dataType: 'geojson' | 'xml-population' | 'auto';
+  dataType: 'geojson' | 'xml-population' | 'landuse-geojson' | 'auto';
 }
 
 /**
@@ -134,8 +134,29 @@ class MLITGeoJSONToRDF4J {
         firstFile.endsWith('.geojson') ||
         firstFile.endsWith('.json')
       ) {
-        this.options.dataType = 'geojson';
-        this.logger.info('Auto-detected GeoJSON data format');
+        // Auto-detect between regular geojson and land use geojson by checking content
+        try {
+          const sampleContent = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+          if (sampleContent.features && sampleContent.features.length > 0) {
+            const firstFeature = sampleContent.features[0];
+            if (firstFeature.properties && 
+                (firstFeature.properties.田!== undefined || 
+                 firstFeature.properties.森林 !== undefined ||
+                 firstFeature.properties.メッシュ !== undefined)) {
+              this.options.dataType = 'landuse-geojson';
+              this.logger.info('Auto-detected Land Use GeoJSON data format');
+            } else {
+              this.options.dataType = 'geojson';
+              this.logger.info('Auto-detected GeoJSON data format');
+            }
+          } else {
+            this.options.dataType = 'geojson';
+            this.logger.info('Auto-detected GeoJSON data format');
+          }
+        } catch (error) {
+          this.logger.warn('Error parsing JSON file for auto-detection, defaulting to GeoJSON');
+          this.options.dataType = 'geojson';
+        }
       } else {
         this.logger.warn(
           'Unknown file extension, defaulting to GeoJSON processing'
@@ -155,7 +176,7 @@ class MLITGeoJSONToRDF4J {
           `XML population data type specified but file ${filePath} does not have .xml extension`
         );
       } else if (
-        this.options.dataType === 'geojson' &&
+        (this.options.dataType === 'geojson' || this.options.dataType === 'landuse-geojson') &&
         !fileExt.endsWith('.geojson') &&
         !fileExt.endsWith('.json')
       ) {
@@ -525,7 +546,7 @@ async function main(): Promise<void> {
     .requiredOption('--repositoryId <id>', 'RDF4J repository identifier')
     .option(
       '--dataType <type>',
-      'Input data type: geojson, xml-population, or auto',
+      'Input data type: geojson, xml-population, landuse-geojson, or auto',
       'auto'
     )
     .option(
@@ -598,7 +619,7 @@ async function main(): Promise<void> {
   }
 
   // Validate data type
-  const validDataTypes = ['geojson', 'xml-population', 'auto'];
+  const validDataTypes = ['geojson', 'xml-population', 'landuse-geojson', 'auto'];
   if (!validDataTypes.includes(options.dataType)) {
     console.error(
       `Invalid data type: ${

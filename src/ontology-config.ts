@@ -49,12 +49,19 @@ export interface MLITPredicates {
   readonly ratioAge65Plus: string;
   readonly ratioAge75plus: string;
   readonly ratioAge80plus: string;
+  // Land use predicates
+  readonly hasLandUseData: string;
+  readonly landUseCategory: string;
+  readonly landUseCode: string;
+  readonly landUseArea: string;
+  readonly landUsePercentage: string;
 }
 
 export interface MLITClasses {
   readonly PopulationSnapshot: string;
   readonly Mesh: string;
   readonly AdministrativeArea: string;
+  readonly LandUseData: string;
 }
 
 export const RDF_PREFIXES: RDFPrefixes = {
@@ -103,12 +110,19 @@ export const MLIT_PREDICATES: MLITPredicates = {
   ratioAge65Plus: `${RDF_PREFIXES.mlit}ratioAge65Plus`,
   ratioAge75plus: `${RDF_PREFIXES.mlit}ratioAge75plus`,
   ratioAge80plus: `${RDF_PREFIXES.mlit}ratioAge80plus`,
+  // Land use predicates
+  hasLandUseData: `${RDF_PREFIXES.mlit}hasLandUseData`,
+  landUseCategory: `${RDF_PREFIXES.mlit}landUseCategory`,
+  landUseCode: `${RDF_PREFIXES.mlit}landUseCode`,
+  landUseArea: `${RDF_PREFIXES.mlit}landUseArea`,
+  landUsePercentage: `${RDF_PREFIXES.mlit}landUsePercentage`,
 } as const;
 
 export const MLIT_CLASSES: MLITClasses = {
   PopulationSnapshot: `${RDF_PREFIXES.mlit}PopulationSnapshot`,
   Mesh: `${RDF_PREFIXES.mlit}Mesh`,
   AdministrativeArea: `${RDF_PREFIXES.mlit}AdministrativeArea`,
+  LandUseData: `${RDF_PREFIXES.mlit}LandUseData`,
 } as const;
 
 export const WGS84_CRS_URI = '<http://www.opengis.net/def/crs/OGC/1.3/CRS84>';
@@ -155,4 +169,16 @@ export function generatePopulationSnapshotIRI(
   year: string
 ): string {
   return `${baseUri}population/${meshId}_${year}`;
+}
+
+/**
+ * Generate a unique IRI for land use data
+ */
+export function generateLandUseIRI(
+  baseUri: string,
+  meshId: string,
+  landUseCode?: string
+): string {
+  const suffix = landUseCode ? `${meshId}_${landUseCode}` : meshId;
+  return `${baseUri}landuse/${suffix}`;
 }

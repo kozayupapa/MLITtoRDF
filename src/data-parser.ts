@@ -10,7 +10,8 @@ import { createLogger, Logger } from 'winston';
 export interface GeoJSONFeature {
   type: 'Feature';
   properties: {
-    MESH_ID: string;
+    MESH_ID?: string;
+    メッシュ?: string;
     SHICODE?: string;
     PTN_2020?: number;
     [key: string]: any;
@@ -157,7 +158,7 @@ export class GeoJSONSyncParser {
       typeof obj.geometry === 'object' &&
       typeof obj.geometry.type === 'string' &&
       obj.geometry.coordinates &&
-      typeof obj.properties.MESH_ID === 'string'
+      (typeof obj.properties.MESH_ID === 'string' || typeof obj.properties.メッシュ === 'string')
     );
   }
 
