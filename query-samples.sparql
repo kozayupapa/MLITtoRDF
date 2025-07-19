@@ -1,0 +1,228 @@
+# GeoSPARQL Query Samples for Population Data
+# RDF4J Repository: test
+# Data: 1km mesh population data for Ishikawa Prefecture (石川県)
+
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ===============================================================
+# 1. 石川県BBOX内のメッシュと基本人口情報を取得
+# ===============================================================
+# 石川県の概算BBOX: 経度 136.0-137.4, 緯度 36.1-37.6
+
+SELECT ?mesh ?meshId ?adminCode ?population2020 ?geometry ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:administrativeCode ?adminCode ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  # 石川県BBOXとの交差判定
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+}
+ORDER BY ?meshId
+LIMIT 100
+
+# ===============================================================
+# 2. 特定エリア内の2025年人口予測データを取得
+# ===============================================================
+
+SELECT ?mesh ?meshId ?totalPop2025 ?ageCategory0_14 ?ageCategory15_64 ?ageCategory65Plus ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?popSnapshot ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  ?popSnapshot mlit:populationYear 2025 ;
+               mlit:totalPopulation ?totalPop2025 ;
+               mlit:ageCategory0_14 ?ageCategory0_14 ;
+               mlit:ageCategory15_64 ?ageCategory15_64 ;
+               mlit:ageCategory65Plus ?ageCategory65Plus .
+  
+  # 金沢市周辺の小さなエリア (経度 136.6-136.7, 緯度 36.5-36.6)
+  FILTER(geo:sfWithin(?wkt, "POLYGON((136.6 36.5, 136.7 36.5, 136.7 36.6, 136.6 36.6, 136.6 36.5))"^^geo:wktLiteral))
+}
+ORDER BY DESC(?totalPop2025)
+
+# ===============================================================
+# 3. 人口密度の高いエリアを検索（石川県内）
+# ===============================================================
+
+SELECT ?mesh ?meshId ?population2020 ?density ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  # 1km²メッシュなので人口がそのまま密度
+  BIND(?population2020 AS ?density)
+  
+  # 石川県BBOX内で人口密度100人/km²以上
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  FILTER(?density >= 100)
+}
+ORDER BY DESC(?density)
+LIMIT 20
+
+# ===============================================================
+# 4. 高齢化率の高いエリアを検索（2030年予測）
+# ===============================================================
+
+SELECT ?mesh ?meshId ?totalPop ?elderlyPop ?elderlyRatio ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?popSnapshot ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  ?popSnapshot mlit:populationYear 2030 ;
+               mlit:totalPopulation ?totalPop ;
+               mlit:ageCategory65Plus ?elderlyPop ;
+               mlit:ratioAge65Plus ?elderlyRatio .
+  
+  # 石川県BBOX内で高齢化率30%以上
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  FILTER(?elderlyRatio >= 0.3)
+  FILTER(?totalPop > 0)
+}
+ORDER BY DESC(?elderlyRatio)
+
+# ===============================================================
+# 5. 年齢層別人口分析（特定ポイント周辺）
+# ===============================================================
+
+SELECT ?mesh ?meshId ?year ?age0_14 ?age15_64 ?age65plus ?totalPop ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?popSnapshot ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  ?popSnapshot mlit:populationYear ?year ;
+               mlit:totalPopulation ?totalPop ;
+               mlit:ageCategory0_14 ?age0_14 ;
+               mlit:ageCategory15_64 ?age15_64 ;
+               mlit:ageCategory65Plus ?age65plus .
+  
+  # 金沢駅周辺5kmバッファ（簡易的な円形エリア）
+  # 実際のGeoSPARQLではst_buffer等の関数が使えますが、ここでは四角形で近似
+  FILTER(geo:sfWithin(?wkt, "POLYGON((136.61 36.57, 136.66 36.57, 136.66 36.60, 136.61 36.60, 136.61 36.57))"^^geo:wktLiteral))
+  FILTER(?year IN (2025, 2030, 2035))
+  FILTER(?totalPop > 0)
+}
+ORDER BY ?meshId ?year
+
+# ===============================================================
+# 6. 人口減少が予測されるエリア（2020年→2030年比較）
+# ===============================================================
+
+SELECT ?mesh ?meshId ?pop2020 ?pop2030 ?changeRate ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?pop2020 ;
+        mlit:hasPopulationData ?popSnapshot2030 ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  ?popSnapshot2030 mlit:populationYear 2030 ;
+                   mlit:totalPopulation ?pop2030 .
+  
+  # 変化率計算
+  BIND((?pop2030 - ?pop2020) / ?pop2020 AS ?changeRate)
+  
+  # 石川県BBOX内で10%以上の人口減少が予測されるエリア
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  FILTER(?pop2020 > 10)  # 最低人口フィルタ
+  FILTER(?changeRate <= -0.1)  # 10%以上減少
+}
+ORDER BY ?changeRate
+
+# ===============================================================
+# 7. 複数年代の人口推移取得（時系列分析）
+# ===============================================================
+
+SELECT ?mesh ?meshId ?year ?totalPop ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  OPTIONAL {
+    ?mesh mlit:totalPopulation2020 ?pop2020 .
+    BIND(2020 AS ?year2020)
+    BIND(?pop2020 AS ?totalPop2020)
+  }
+  
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:populationYear ?snapshotYear ;
+                 mlit:totalPopulation ?snapshotPop .
+    FILTER(?snapshotYear IN (2025, 2030, 2035, 2040))
+  }
+  
+  # UNIONで2020年データと予測データを統合
+  {
+    BIND(2020 AS ?year)
+    BIND(?pop2020 AS ?totalPop)
+    FILTER(BOUND(?pop2020))
+  } UNION {
+    BIND(?snapshotYear AS ?year)
+    BIND(?snapshotPop AS ?totalPop)
+    FILTER(BOUND(?snapshotPop))
+  }
+  
+  # 能登半島の特定エリア
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.8 37.0, 137.3 37.0, 137.3 37.4, 136.8 37.4, 136.8 37.0))"^^geo:wktLiteral))
+  FILTER(?totalPop > 0)
+}
+ORDER BY ?meshId ?year
+
+# ===============================================================
+# 8. 統計サマリー: エリア内総人口と平均年齢層比率
+# ===============================================================
+
+SELECT ?year (SUM(?totalPop) AS ?totalPopulation) 
+       (AVG(?ratio0_14) AS ?avgRatio0_14)
+       (AVG(?ratio15_64) AS ?avgRatio15_64) 
+       (AVG(?ratio65plus) AS ?avgRatio65plus)
+       (COUNT(?mesh) AS ?meshCount)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:hasPopulationData ?popSnapshot ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  
+  ?popSnapshot mlit:populationYear ?year ;
+               mlit:totalPopulation ?totalPop ;
+               mlit:ratioAge0_14 ?ratio0_14 ;
+               mlit:ratioAge15_64 ?ratio15_64 ;
+               mlit:ratioAge65Plus ?ratio65plus .
+  
+  # 石川県全域
+  FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  FILTER(?year IN (2025, 2030, 2035))
+  FILTER(?totalPop > 0)
+}
+GROUP BY ?year
+ORDER BY ?year

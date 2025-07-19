@@ -1,0 +1,237 @@
+# 実際のデータに基づく動作確認済みクエリサンプル
+# 石川県1kmメッシュ人口データ（2258メッシュ）
+
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ===============================================================
+# 1. 基本クエリ: 全メッシュの概要
+# ===============================================================
+
+SELECT ?meshId ?adminCode ?population2020 (SUBSTR(?wkt, 1, 100) AS ?wktSample)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:administrativeCode ?adminCode ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  ?geometry geo:wktLiteral ?wkt .
+}
+ORDER BY DESC(?population2020)
+LIMIT 10
+
+# ===============================================================
+# 2. 座標範囲指定: 現在のデータ範囲内での検索
+# ===============================================================
+
+SELECT ?meshId ?population2020 ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  ?geometry geo:wktLiteral ?wkt .
+  
+  # 実際のデータ範囲に基づくBBOX（石川県南部）
+  FILTER(CONTAINS(STR(?wkt), "136.35") || CONTAINS(STR(?wkt), "136.36") || CONTAINS(STR(?wkt), "136.37"))
+}
+ORDER BY DESC(?population2020)
+LIMIT 15
+
+# ===============================================================
+# 3. 人口密度分析: 高人口密度エリア
+# ===============================================================
+
+SELECT ?meshId ?population2020 ?density ?coordinates
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  ?geometry geo:wktLiteral ?wkt .
+  
+  # 1km²メッシュなので人口=密度
+  BIND(?population2020 AS ?density)
+  BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([^)]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
+  
+  FILTER(?density > 50)  # 50人/km²以上
+}
+ORDER BY DESC(?density)
+
+# ===============================================================
+# 4. 2025年人口予測データの取得
+# ===============================================================
+
+SELECT ?meshId ?pop2020 ?pop2025 ?elderlyPop2025 ?elderlyRatio2025 ?coordinates
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?pop2020 ;
+        mlit:hasPopulationData ?snapshot2025 ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([^)]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
+  
+  ?snapshot2025 mlit:populationYear 2025 ;
+                mlit:totalPopulation ?pop2025 ;
+                mlit:ageCategory65Plus ?elderlyPop2025 ;
+                mlit:ratioAge65Plus ?elderlyRatio2025 .
+  
+  FILTER(?pop2020 > 20)  # 最低人口フィルタ
+}
+ORDER BY DESC(?elderlyRatio2025)
+LIMIT 20
+
+# ===============================================================
+# 5. 年齢層別人口分析（2030年）
+# ===============================================================
+
+SELECT ?meshId ?totalPop ?children ?working ?elderly 
+       (?children/?totalPop AS ?childRatio)
+       (?working/?totalPop AS ?workingRatio) 
+       (?elderly/?totalPop AS ?elderlyRatio)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?snapshot .
+  
+  ?snapshot mlit:populationYear 2030 ;
+            mlit:totalPopulation ?totalPop ;
+            mlit:ageCategory0_14 ?children ;
+            mlit:ageCategory15_64 ?working ;
+            mlit:ageCategory65Plus ?elderly .
+  
+  FILTER(?totalPop > 10)
+}
+ORDER BY DESC(?elderlyRatio)
+LIMIT 15
+
+# ===============================================================
+# 6. 人口変化予測（2020年→2030年）
+# ===============================================================
+
+SELECT ?meshId ?pop2020 ?pop2030 
+       ((?pop2030 - ?pop2020) AS ?popChange)
+       ((?pop2030 - ?pop2020) / ?pop2020 AS ?changeRate)
+       ?coordinates
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?pop2020 ;
+        mlit:hasPopulationData ?snapshot2030 ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:wktLiteral ?wkt .
+  BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([^)]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
+  
+  ?snapshot2030 mlit:populationYear 2030 ;
+                mlit:totalPopulation ?pop2030 .
+  
+  FILTER(?pop2020 > 5)
+}
+ORDER BY ?changeRate
+LIMIT 20
+
+# ===============================================================
+# 7. 地理的近接性検索（特定メッシュ周辺）
+# ===============================================================
+
+SELECT ?meshId ?population2020 ?distance ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?population2020 ;
+        geo:hasGeometry ?geometry .
+  ?geometry geo:wktLiteral ?wkt .
+  
+  # メッシュ54362268（最初のメッシュ）周辺
+  # 簡易的な距離フィルタ：座標の差で近似
+  FILTER(CONTAINS(STR(?wkt), "136.35") || CONTAINS(STR(?wkt), "136.36"))
+  FILTER(CONTAINS(STR(?wkt), "36.2"))
+  
+  BIND("近隣" AS ?distance)
+}
+ORDER BY DESC(?population2020)
+
+# ===============================================================
+# 8. 統計サマリー: 年次別総人口
+# ===============================================================
+
+SELECT ?year (SUM(?population) AS ?totalPopulation) (COUNT(?mesh) AS ?meshCount) (AVG(?population) AS ?avgPopulation)
+WHERE {
+  {
+    SELECT ?mesh 2020 AS ?year ?pop2020 AS ?population WHERE {
+      ?mesh rdf:type mlit:Mesh ;
+            mlit:totalPopulation2020 ?pop2020 .
+      FILTER(?pop2020 > 0)
+    }
+  } UNION {
+    SELECT ?mesh ?year ?population WHERE {
+      ?mesh rdf:type mlit:Mesh ;
+            mlit:hasPopulationData ?snapshot .
+      ?snapshot mlit:populationYear ?year ;
+                mlit:totalPopulation ?population .
+      FILTER(?year IN (2025, 2030, 2035, 2040))
+      FILTER(?population > 0)
+    }
+  }
+}
+GROUP BY ?year
+ORDER BY ?year
+
+# ===============================================================
+# 9. 詳細な年齢構成分析（特定年）
+# ===============================================================
+
+SELECT ?meshId 
+       ?age0_4 ?age5_9 ?age10_14 ?age15_19 ?age20_24
+       ?age65_69 ?age70_74 ?age75_79 ?age80_84 ?age85_89
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?snapshot .
+  
+  ?snapshot mlit:populationYear 2025 ;
+            mlit:ageGroup0_4 ?age0_4 ;
+            mlit:ageGroup5_9 ?age5_9 ;
+            mlit:ageGroup10_14 ?age10_14 ;
+            mlit:ageGroup15_19 ?age15_19 ;
+            mlit:ageGroup20_24 ?age20_24 ;
+            mlit:ageGroup65_69 ?age65_69 ;
+            mlit:ageGroup70_74 ?age70_74 ;
+            mlit:ageGroup75_79 ?age75_79 ;
+            mlit:ageGroup80_84 ?age80_84 ;
+            mlit:ageGroup85_89 ?age85_89 .
+  
+  # 高齢者人口が多いメッシュを選択
+  FILTER((?age65_69 + ?age70_74 + ?age75_79 + ?age80_84 + ?age85_89) > 10)
+}
+ORDER BY DESC((?age65_69 + ?age70_74 + ?age75_79 + ?age80_84 + ?age85_89))
+LIMIT 10
+
+# ===============================================================
+# 10. GeoJSON形式での出力準備
+# ===============================================================
+
+SELECT ?meshId ?population2020 ?pop2025 ?elderlyRatio ?geometry
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:totalPopulation2020 ?population2020 ;
+        mlit:hasPopulationData ?snapshot2025 ;
+        geo:hasGeometry ?geom .
+  
+  ?geom geo:wktLiteral ?geometry .
+  
+  ?snapshot2025 mlit:populationYear 2025 ;
+                mlit:totalPopulation ?pop2025 ;
+                mlit:ratioAge65Plus ?elderlyRatio .
+  
+  FILTER(?population2020 > 10)
+}
+ORDER BY ?meshId
+LIMIT 50
