@@ -321,7 +321,16 @@ class MLITGeoJSONToRDF4J {
       let result: LoadResult | null = null;
       if (!this.options.dryRun) {
         this.logger.info('Starting RDF4J bulk load...');
-        result = await loader.loadTriples(allTriples);
+        
+        // Calculate average triples per feature for accurate restart instructions
+        const triplesPerFeature = parsedFeatures.length > 0 ? 
+          Math.round(allTriples.length / parsedFeatures.length) : 1;
+        
+        result = await loader.loadTriplesWithFeatureInfo(
+          allTriples, 
+          triplesPerFeature, 
+          parsedFeatures.length
+        );
       } else {
         this.logger.info('Dry run mode - skipping RDF4J upload');
         result = {
