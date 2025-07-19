@@ -38,18 +38,17 @@ export interface MLITPredicates {
   readonly ageGroup80_84: string;
   readonly ageGroup85_89: string;
   readonly ageGroup90_94: string;
-  readonly ageGroup95_99: string;
-  readonly ageGroup100Plus: string;
+  readonly ageGroup95plus: string;
   readonly ageCategory0_14: string;
   readonly ageCategory15_64: string;
   readonly ageCategory65Plus: string;
-  readonly ageCategoryWorking: string;
-  readonly ageCategoryElderly: string;
+  readonly ageCategory75plus: string;
+  readonly ageCategory80plus: string;
   readonly ratioAge0_14: string;
   readonly ratioAge15_64: string;
   readonly ratioAge65Plus: string;
-  readonly ratioWorking: string;
-  readonly ratioElderly: string;
+  readonly ratioAge75plus: string;
+  readonly ratioAge80plus: string;
 }
 
 export interface MLITClasses {
@@ -63,7 +62,7 @@ export const RDF_PREFIXES: RDFPrefixes = {
   mlit: 'http://example.org/mlit/ontology#',
   rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
   rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
-  xsd: 'http://www.w3.org/2001/XMLSchema#'
+  xsd: 'http://www.w3.org/2001/XMLSchema#',
 } as const;
 
 export const MLIT_PREDICATES: MLITPredicates = {
@@ -93,24 +92,23 @@ export const MLIT_PREDICATES: MLITPredicates = {
   ageGroup80_84: `${RDF_PREFIXES.mlit}ageGroup80_84`,
   ageGroup85_89: `${RDF_PREFIXES.mlit}ageGroup85_89`,
   ageGroup90_94: `${RDF_PREFIXES.mlit}ageGroup90_94`,
-  ageGroup95_99: `${RDF_PREFIXES.mlit}ageGroup95_99`,
-  ageGroup100Plus: `${RDF_PREFIXES.mlit}ageGroup100Plus`,
+  ageGroup95plus: `${RDF_PREFIXES.mlit}ageGroup95plus`,
   ageCategory0_14: `${RDF_PREFIXES.mlit}ageCategory0_14`,
   ageCategory15_64: `${RDF_PREFIXES.mlit}ageCategory15_64`,
   ageCategory65Plus: `${RDF_PREFIXES.mlit}ageCategory65Plus`,
-  ageCategoryWorking: `${RDF_PREFIXES.mlit}ageCategoryWorking`,
-  ageCategoryElderly: `${RDF_PREFIXES.mlit}ageCategoryElderly`,
+  ageCategory75plus: `${RDF_PREFIXES.mlit}ageCategory75plus`,
+  ageCategory80plus: `${RDF_PREFIXES.mlit}ageCategory80plus`,
   ratioAge0_14: `${RDF_PREFIXES.mlit}ratioAge0_14`,
   ratioAge15_64: `${RDF_PREFIXES.mlit}ratioAge15_64`,
   ratioAge65Plus: `${RDF_PREFIXES.mlit}ratioAge65Plus`,
-  ratioWorking: `${RDF_PREFIXES.mlit}ratioWorking`,
-  ratioElderly: `${RDF_PREFIXES.mlit}ratioElderly`
+  ratioAge75plus: `${RDF_PREFIXES.mlit}ratioAge75plus`,
+  ratioAge80plus: `${RDF_PREFIXES.mlit}ratioAge80plus`,
 } as const;
 
 export const MLIT_CLASSES: MLITClasses = {
   PopulationSnapshot: `${RDF_PREFIXES.mlit}PopulationSnapshot`,
   Mesh: `${RDF_PREFIXES.mlit}Mesh`,
-  AdministrativeArea: `${RDF_PREFIXES.mlit}AdministrativeArea`
+  AdministrativeArea: `${RDF_PREFIXES.mlit}AdministrativeArea`,
 } as const;
 
 export const WGS84_CRS_URI = '<http://www.opengis.net/def/crs/OGC/1.3/CRS84>';
@@ -127,7 +125,11 @@ export function generateSparqlPrefixes(): string {
 /**
  * Generate a unique IRI for a mesh feature
  */
-export function generateMeshIRI(baseUri: string, meshId: string, year?: string): string {
+export function generateMeshIRI(
+  baseUri: string,
+  meshId: string,
+  year?: string
+): string {
   const suffix = year ? `${meshId}_${year}` : meshId;
   return `${baseUri}mesh/${suffix}`;
 }
@@ -135,7 +137,11 @@ export function generateMeshIRI(baseUri: string, meshId: string, year?: string):
 /**
  * Generate a unique IRI for a geometry
  */
-export function generateGeometryIRI(baseUri: string, meshId: string, year?: string): string {
+export function generateGeometryIRI(
+  baseUri: string,
+  meshId: string,
+  year?: string
+): string {
   const suffix = year ? `${meshId}_${year}` : meshId;
   return `${baseUri}geometry/${suffix}_geom`;
 }
@@ -143,6 +149,10 @@ export function generateGeometryIRI(baseUri: string, meshId: string, year?: stri
 /**
  * Generate a unique IRI for a population snapshot
  */
-export function generatePopulationSnapshotIRI(baseUri: string, meshId: string, year: string): string {
+export function generatePopulationSnapshotIRI(
+  baseUri: string,
+  meshId: string,
+  year: string
+): string {
   return `${baseUri}population/${meshId}_${year}`;
 }

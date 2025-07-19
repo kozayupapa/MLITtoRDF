@@ -154,10 +154,16 @@ export class GeoSPARQLTransformer {
     const populationSnapshotIRIs: string[] = [];
     if (includePopulationSnapshots) {
       // Extract all available years from properties
-      const availableYears = this.extractAllYearsFromProperties(feature.properties);
-      
+      const availableYears = this.extractAllYearsFromProperties(
+        feature.properties
+      );
+
       for (const year of availableYears) {
-        const snapshotIRI = generatePopulationSnapshotIRI(baseUri, meshId, year);
+        const snapshotIRI = generatePopulationSnapshotIRI(
+          baseUri,
+          meshId,
+          year
+        );
         populationSnapshotIRIs.push(snapshotIRI);
 
         const populationTriples = this.createPopulationSnapshot(
@@ -298,8 +304,7 @@ export class GeoSPARQLTransformer {
       { property: `PT17_${year}`, predicate: MLIT_PREDICATES.ageGroup80_84 },
       { property: `PT18_${year}`, predicate: MLIT_PREDICATES.ageGroup85_89 },
       { property: `PT19_${year}`, predicate: MLIT_PREDICATES.ageGroup90_94 },
-      { property: `PT20_${year}`, predicate: MLIT_PREDICATES.ageGroup95_99 },
-      { property: `PT21_${year}`, predicate: MLIT_PREDICATES.ageGroup100Plus },
+      { property: `PT20_${year}`, predicate: MLIT_PREDICATES.ageGroup95plus },
     ];
 
     // Add age group data
@@ -321,8 +326,14 @@ export class GeoSPARQLTransformer {
       { property: `PTA_${year}`, predicate: MLIT_PREDICATES.ageCategory0_14 },
       { property: `PTB_${year}`, predicate: MLIT_PREDICATES.ageCategory15_64 },
       { property: `PTC_${year}`, predicate: MLIT_PREDICATES.ageCategory65Plus },
-      { property: `PTD_${year}`, predicate: MLIT_PREDICATES.ageCategoryWorking },
-      { property: `PTE_${year}`, predicate: MLIT_PREDICATES.ageCategoryElderly },
+      {
+        property: `PTD_${year}`,
+        predicate: MLIT_PREDICATES.ageCategory75plus,
+      },
+      {
+        property: `PTE_${year}`,
+        predicate: MLIT_PREDICATES.ageCategory80plus,
+      },
     ];
 
     for (const mapping of ageCategoryMappings) {
@@ -343,8 +354,8 @@ export class GeoSPARQLTransformer {
       { property: `RTA_${year}`, predicate: MLIT_PREDICATES.ratioAge0_14 },
       { property: `RTB_${year}`, predicate: MLIT_PREDICATES.ratioAge15_64 },
       { property: `RTC_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus },
-      { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioWorking },
-      { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioElderly },
+      { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioAge75plus },
+      { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioAge80plus },
     ];
 
     for (const mapping of ratioMappings) {
