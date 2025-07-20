@@ -1,0 +1,105 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# シンプルなスライディングウィンドウ災害分析
+# 能登地方を3x3グリッドに分割して優先度分析
+
+SELECT ?windowId ?windowName ?meshCount 
+       ?totalPopulation ?elderlyPopulation ?buildingArea
+       ?priorityScore
+WHERE {
+  # 3x3ウィンドウグリッドの定義
+  VALUES (?windowId ?windowName ?centerLat ?centerLng) {
+    ("W1" "北西エリア" 37.09 136.71)
+    ("W2" "北中エリア" 37.09 136.80) 
+    ("W3" "北東エリア" 37.09 136.89)
+    ("W4" "中西エリア" 37.00 136.71)
+    ("W5" "中央エリア" 37.00 136.80)
+    ("W6" "中東エリア" 37.00 136.89)
+    ("W7" "南西エリア" 36.91 136.71)
+    ("W8" "南中エリア" 36.91 136.80)
+    ("W9" "南東エリア" 36.91 136.89)
+  }
+  
+  # 各ウィンドウ内のデータを集計
+  {
+    SELECT ?windowId ?windowName 
+           (COUNT(DISTINCT ?meshId) AS ?meshCount)
+           (SUM(?totalPop) AS ?totalPopulation) 
+           (SUM(?elderlyPop) AS ?elderlyPopulation)
+           (SUM(?buildingAreaValue) AS ?buildingArea)
+    WHERE {
+      VALUES (?windowId ?windowName ?centerLat ?centerLng) {
+        ("W1" "北西エリア" 37.09 136.71)
+        ("W2" "北中エリア" 37.09 136.80) 
+        ("W3" "北東エリア" 37.09 136.89)
+        ("W4" "中西エリア" 37.00 136.71)
+        ("W5" "中央エリア" 37.00 136.80)
+        ("W6" "中東エリア" 37.00 136.89)
+        ("W7" "南西エリア" 36.91 136.71)
+        ("W8" "南中エリア" 36.91 136.80)
+        ("W9" "南東エリア" 36.91 136.89)
+      }
+      
+      # 各ウィンドウ範囲内のメッシュを取得
+      ?mesh rdf:type mlit:Mesh ;
+            mlit:meshId ?meshId ;
+            geo:hasGeometry ?geom .
+      
+      ?geom geo:wktLiteral ?wkt .
+      
+      # 能登地方の座標範囲内のメッシュのみ対象
+      FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))
+      FILTER(CONTAINS(STR(?wkt), "36.") || CONTAINS(STR(?wkt), "37."))
+      
+      # 人口データ取得
+      OPTIONAL {
+        ?mesh mlit:hasPopulationData ?popSnapshot .
+        ?popSnapshot mlit:totalPopulation ?totalPop ;
+                     mlit:ageCategory65Plus ?elderlyPop .
+      }
+      
+      # 建物用地データ取得
+      OPTIONAL {
+        ?mesh mlit:hasLandUseData ?buildingLand .
+        ?buildingLand mlit:landUseCategory "建物用地" ;
+                      mlit:landUseArea ?buildingAreaValue .
+      }
+      
+      # データが存在するメッシュのみ
+      FILTER(BOUND(?totalPop) || BOUND(?buildingAreaValue))
+    }
+    GROUP BY ?windowId ?windowName
+  }
+  
+  # ウィンドウ優先度スコア計算
+  BIND(
+    # 人口密度スコア（高齢者重み付け）60%
+    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.6 +
+    
+    # 建物密度スコア 30%
+    (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+    
+    # エリア充実度スコア（メッシュ数） 10%
+    (?meshCount * 50) * 0.1
+    
+    AS ?priorityScore
+  )
+  
+  # 有意なデータがあるウィンドウのみ
+  FILTER(?meshCount > 0)
+}
+ORDER BY DESC(?priorityScore)
+
+# アルゴリズム説明:
+# 1. 能登地方を3x3=9個の約10km四方エリアに分割
+# 2. 各エリアの中心座標を事前定義（数学関数不使用）
+# 3. エリア内のメッシュデータを集計:
+#    - 人口密度（高齢者優先重み付け）60%
+#    - 建物用地面積（被害想定）30%
+#    - メッシュ数（データ充実度）10%
+# 4. 総合優先度スコアで全エリアをランキング
+# 5. 災害対応で最も重要な撮像エリアを特定

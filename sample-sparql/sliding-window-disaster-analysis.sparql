@@ -1,0 +1,145 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# スライディングウィンドウ災害分析クエリ
+# 災害エリアに重なる10km四方の窓を段階的にずらして最適撮像エリアを選定
+
+SELECT ?windowId ?windowCenterLat ?windowCenterLng 
+       ?meshCount ?totalPopulation ?totalElderlyPop 
+       ?totalBuildingArea ?totalForestArea 
+       ?avgPriorityScore ?maxPriorityScore ?windowPriorityScore
+WHERE {
+  # 災害中心座標とパラメータ設定
+  VALUES (?disasterCenterLat ?disasterCenterLng ?disasterRadius ?windowSize ?stepSize) {
+    (37.0 136.8 15.0 0.09 0.02)  # 能登地方、災害半径15km、窓サイズ0.09度(約10km)、ステップ0.02度(約2km)
+  }
+  
+  # スライディングウィンドウの中心座標を生成（災害中心から±4ステップの範囲）
+  VALUES ?latStep { -4 -3 -2 -1 0 1 2 3 4 }
+  VALUES ?lngStep { -4 -3 -2 -1 0 1 2 3 4 }
+  
+  BIND(?disasterCenterLat + (?latStep * ?stepSize) AS ?windowCenterLat)
+  BIND(?disasterCenterLng + (?lngStep * ?stepSize) AS ?windowCenterLng)
+  BIND(CONCAT("W_", STR(?latStep), "_", STR(?lngStep)) AS ?windowId)
+  
+  # ウィンドウの境界を計算
+  BIND(?windowCenterLat - (?windowSize / 2) AS ?windowMinLat)
+  BIND(?windowCenterLat + (?windowSize / 2) AS ?windowMaxLat)
+  BIND(?windowCenterLng - (?windowSize / 2) AS ?windowMinLng)
+  BIND(?windowCenterLng + (?windowSize / 2) AS ?windowMaxLng)
+  
+  # 災害エリアとの重複チェック（ウィンドウ中心と災害中心の距離）
+  BIND(SQRT(POWER(?windowCenterLat - ?disasterCenterLat, 2) + 
+            POWER(?windowCenterLng - ?disasterCenterLng, 2)) AS ?distanceFromDisaster)
+  
+  # 災害エリアに重なるウィンドウのみ処理（距離が災害半径の1.5倍以内）
+  FILTER(?distanceFromDisaster <= (?disasterRadius * 0.01 * 1.5))  # 0.01は度からkmの概算変換
+  
+  # ウィンドウ内のメッシュデータを集計
+  {
+    SELECT ?windowId ?windowCenterLat ?windowCenterLng 
+           (COUNT(?mesh) AS ?meshCount)
+           (SUM(?totalPop) AS ?totalPopulation)
+           (SUM(?elderlyPop) AS ?totalElderlyPop)
+           (SUM(?buildingArea) AS ?totalBuildingArea)
+           (SUM(?forestArea) AS ?totalForestArea)
+           (AVG(?meshPriority) AS ?avgPriorityScore)
+           (MAX(?meshPriority) AS ?maxPriorityScore)
+    WHERE {
+      # 外部クエリから変数を継承
+      VALUES (?disasterCenterLat ?disasterCenterLng ?disasterRadius ?windowSize ?stepSize) {
+        (37.0 136.8 15.0 0.09 0.02)
+      }
+      
+      VALUES ?latStep { -4 -3 -2 -1 0 1 2 3 4 }
+      VALUES ?lngStep { -4 -3 -2 -1 0 1 2 3 4 }
+      
+      BIND(?disasterCenterLat + (?latStep * ?stepSize) AS ?windowCenterLat)
+      BIND(?disasterCenterLng + (?lngStep * ?stepSize) AS ?windowCenterLng)
+      BIND(CONCAT("W_", STR(?latStep), "_", STR(?lngStep)) AS ?windowId)
+      
+      BIND(?windowCenterLat - (?windowSize / 2) AS ?windowMinLat)
+      BIND(?windowCenterLat + (?windowSize / 2) AS ?windowMaxLat)
+      BIND(?windowCenterLng - (?windowSize / 2) AS ?windowMinLng)
+      BIND(?windowCenterLng + (?windowSize / 2) AS ?windowMaxLng)
+      
+      BIND(SQRT(POWER(?windowCenterLat - ?disasterCenterLat, 2) + 
+                POWER(?windowCenterLng - ?disasterCenterLng, 2)) AS ?distanceFromDisaster)
+      FILTER(?distanceFromDisaster <= (?disasterRadius * 0.01 * 1.5))
+      
+      # ウィンドウ内のメッシュを特定
+      ?mesh rdf:type mlit:Mesh ;
+            mlit:meshId ?meshId ;
+            geo:hasGeometry ?geom .
+      
+      ?geom geo:wktLiteral ?wkt .
+      
+      # 座標範囲による簡易フィルタリング（能登地方の範囲内）
+      FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))
+      FILTER(CONTAINS(STR(?wkt), "36.") || CONTAINS(STR(?wkt), "37."))
+      
+      # 人口データ
+      OPTIONAL {
+        ?mesh mlit:hasPopulationData ?popSnapshot .
+        ?popSnapshot mlit:totalPopulation ?totalPop ;
+                     mlit:ageCategory65Plus ?elderlyPop .
+      }
+      
+      # 土地利用データ
+      OPTIONAL {
+        ?mesh mlit:hasLandUseData ?buildingLand .
+        ?buildingLand mlit:landUseCategory "建物用地" ;
+                      mlit:landUseArea ?buildingArea .
+      }
+      
+      OPTIONAL {
+        ?mesh mlit:hasLandUseData ?forestLand .
+        ?forestLand mlit:landUseCategory "森林" ;
+                    mlit:landUseArea ?forestArea .
+      }
+      
+      # メッシュ単位の優先度計算
+      BIND(
+        (COALESCE(?totalPop, 0) * 1.0 + COALESCE(?elderlyPop, 0) * 2.0) * 0.4 +
+        (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+        (COALESCE(?forestArea, 0) / 1000000) * 0.3
+        AS ?meshPriority
+      )
+      
+      # 最低データ要件
+      FILTER(COALESCE(?totalPop, 0) > 0 || COALESCE(?buildingArea, 0) > 0)
+    }
+    GROUP BY ?windowId ?windowCenterLat ?windowCenterLng
+  }
+  
+  # ウィンドウ全体の優先度スコア計算
+  BIND(
+    # 人口密度重み 40%
+    (?totalPopulation * 0.4) +
+    # 建物密度重み 30%  
+    ((?totalBuildingArea / 1000000) * 0.3) +
+    # 森林面積重み 20%
+    ((?totalForestArea / 1000000) * 0.2) +
+    # メッシュ多様性重み 10%
+    (?meshCount * 10)
+    AS ?windowPriorityScore
+  )
+  
+  # 最低閾値フィルタ
+  FILTER(?meshCount > 0 && ?windowPriorityScore > 100)
+}
+ORDER BY DESC(?windowPriorityScore)
+LIMIT 15
+
+# クエリ説明:
+# 1. 災害中心（能登地方: 37.0N, 136.8E）から10km四方の窓を2kmステップでスライド
+# 2. 各ウィンドウが災害エリア（半径15km）と重複するかチェック
+# 3. ウィンドウ内のメッシュデータを集計：
+#    - 人口密度（高齢者重み付け）
+#    - 建物用地面積
+#    - 森林面積
+#    - メッシュ数（多様性）
+# 4. ウィンドウ優先度スコアを計算して上位15窓を選定

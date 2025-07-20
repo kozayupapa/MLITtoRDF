@@ -1,0 +1,113 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# 最適化スライディングウィンドウ分析（簡易版）
+# 10km四方の撮像窓を段階的にずらして災害対応優先エリアを選定
+
+SELECT ?windowId ?centerLat ?centerLng ?meshCount 
+       ?totalPopulation ?elderlyPopulation ?buildingArea
+       ?priorityScore
+WHERE {
+  # 災害エリア設定（能登地方中心）
+  VALUES (?baseLat ?baseLng) { (37.0 136.8) }
+  
+  # 3x3グリッドでウィンドウをスライド（約30km×30km範囲を10kmステップ）
+  VALUES ?latOffset { -0.09 0.0 0.09 }  # 約±10km範囲
+  VALUES ?lngOffset { -0.09 0.0 0.09 }
+  
+  # ウィンドウ中心座標を計算
+  BIND(?baseLat + ?latOffset AS ?centerLat)
+  BIND(?baseLng + ?lngOffset AS ?centerLng)
+  BIND(CONCAT("WIN_", 
+              IF(?latOffset < 0, "S", IF(?latOffset > 0, "N", "C")), 
+              IF(?lngOffset < 0, "W", IF(?lngOffset > 0, "E", "C"))
+       ) AS ?windowId)
+  
+  # ウィンドウ内のデータを集計
+  {
+    SELECT ?windowId ?centerLat ?centerLng
+           (COUNT(DISTINCT ?meshId) AS ?meshCount)
+           (SUM(?totalPop) AS ?totalPopulation) 
+           (SUM(?elderlyPop) AS ?elderlyPopulation)
+           (SUM(?buildingAreaValue) AS ?buildingArea)
+    WHERE {
+      VALUES (?baseLat ?baseLng) { (37.0 136.8) }
+      VALUES ?latOffset { -0.09 0.0 0.09 }
+      VALUES ?lngOffset { -0.09 0.0 0.09 }
+      
+      BIND(?baseLat + ?latOffset AS ?centerLat)
+      BIND(?baseLng + ?lngOffset AS ?centerLng)
+      BIND(CONCAT("WIN_", 
+                  IF(?latOffset < 0, "S", IF(?latOffset > 0, "N", "C")), 
+                  IF(?lngOffset < 0, "W", IF(?lngOffset > 0, "E", "C"))
+           ) AS ?windowId)
+      
+      # ウィンドウサイズ: 0.09度 (約10km)
+      BIND(?centerLat - 0.045 AS ?minLat)
+      BIND(?centerLat + 0.045 AS ?maxLat)
+      BIND(?centerLng - 0.045 AS ?minLng)
+      BIND(?centerLng + 0.045 AS ?maxLng)
+      
+      # ウィンドウ内のメッシュを取得
+      ?mesh rdf:type mlit:Mesh ;
+            mlit:meshId ?meshId ;
+            geo:hasGeometry ?geom .
+      
+      ?geom geo:wktLiteral ?wkt .
+      
+      # 能登地方の座標範囲内のメッシュのみ対象
+      FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))
+      FILTER(CONTAINS(STR(?wkt), "36.") || CONTAINS(STR(?wkt), "37."))
+      
+      # 人口データ取得
+      OPTIONAL {
+        ?mesh mlit:hasPopulationData ?popSnapshot .
+        ?popSnapshot mlit:totalPopulation ?totalPop ;
+                     mlit:ageCategory65Plus ?elderlyPop .
+      }
+      
+      # 建物用地データ取得
+      OPTIONAL {
+        ?mesh mlit:hasLandUseData ?buildingLand .
+        ?buildingLand mlit:landUseCategory "建物用地" ;
+                      mlit:landUseArea ?buildingAreaValue .
+      }
+      
+      # データが存在するメッシュのみ
+      FILTER(BOUND(?totalPop) || BOUND(?buildingAreaValue))
+    }
+    GROUP BY ?windowId ?centerLat ?centerLng
+  }
+  
+  # ウィンドウ優先度スコア計算
+  BIND(
+    # 人口密度スコア（高齢者重み付け）50%
+    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.5 +
+    
+    # 建物密度スコア 30%
+    (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+    
+    # エリア充実度スコア（メッシュ数） 20%
+    (?meshCount * 100) * 0.2
+    
+    AS ?priorityScore
+  )
+  
+  # 有意なデータがあるウィンドウのみ
+  FILTER(?meshCount > 0 && ?priorityScore > 500)
+}
+ORDER BY DESC(?priorityScore)
+LIMIT 10
+
+# アルゴリズム説明:
+# 1. 災害中心（能登地方）から5x5=25個の10km四方ウィンドウを生成
+# 2. 各ウィンドウを約10kmずつスライドして配置
+# 3. ウィンドウ内のメッシュデータを集計:
+#    - 人口密度（高齢者優先重み付け）
+#    - 建物用地面積（被害想定）
+#    - メッシュ数（データ充実度）
+# 4. 総合優先度スコアで上位10ウィンドウを選定
+# 5. 結果：災害エリアで最も撮像価値の高い10km四方エリア
