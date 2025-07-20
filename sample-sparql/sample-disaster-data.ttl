@@ -1,0 +1,88 @@
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix mlit: <http://example.org/mlit/ontology#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# 能登地方2024年9月大雨災害のサンプルデータ
+
+<http://example.org/mlit/disaster/noto_heavy_rain_202409> 
+    rdf:type mlit:DisasterEvent ;
+    mlit:disasterType "heavy_rain" ;
+    mlit:severityLevel 4 ;
+    mlit:startDate "2024-09-01"^^xsd:date ;
+    mlit:endDate "2024-09-05"^^xsd:date ;
+    mlit:affectedArea "能登地方" ;
+    mlit:impactRadius 20000 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POINT(136.8 37.0)"^^geo:wktLiteral
+    ] .
+
+# 衛星撮像エリア候補（10km四方）
+<http://example.org/mlit/imaging/area_001>
+    rdf:type mlit:SatelliteImagingArea ;
+    mlit:priorityScore 850.5 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.75 36.95, 136.85 36.95, 136.85 37.05, 136.75 37.05, 136.75 36.95))"^^geo:wktLiteral
+    ] .
+
+<http://example.org/mlit/imaging/area_002>
+    rdf:type mlit:SatelliteImagingArea ;
+    mlit:priorityScore 782.3 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.85 36.95, 136.95 36.95, 136.95 37.05, 136.85 37.05, 136.85 36.95))"^^geo:wktLiteral
+    ] .
+
+<http://example.org/mlit/imaging/area_003>
+    rdf:type mlit:SatelliteImagingArea ;
+    mlit:priorityScore 721.8 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.75 37.05, 136.85 37.05, 136.85 37.15, 136.75 37.15, 136.75 37.05))"^^geo:wktLiteral
+    ] .
+
+<http://example.org/mlit/imaging/area_004>
+    rdf:type mlit:SatelliteImagingArea ;
+    mlit:priorityScore 698.4 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.85 37.05, 136.95 37.05, 136.95 37.15, 136.85 37.15, 136.85 37.05))"^^geo:wktLiteral
+    ] .
+
+<http://example.org/mlit/imaging/area_005>
+    rdf:type mlit:SatelliteImagingArea ;
+    mlit:priorityScore 654.2 ;
+    geo:hasGeometry [
+        geo:wktLiteral "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.65 36.95, 136.75 36.95, 136.75 37.05, 136.65 37.05, 136.65 36.95))"^^geo:wktLiteral
+    ] .
+
+# 災害影響度マッピング（メッシュごと）
+<http://example.org/mlit/disaster/noto_heavy_rain_202409>
+    mlit:hasDisasterData <http://example.org/mlit/mesh/54360700/disaster_impact> ,
+                         <http://example.org/mlit/mesh/54360701/disaster_impact> ,
+                         <http://example.org/mlit/mesh/54360702/disaster_impact> ,
+                         <http://example.org/mlit/mesh/54360703/disaster_impact> ,
+                         <http://example.org/mlit/mesh/54360704/disaster_impact> .
+
+<http://example.org/mlit/mesh/54360700/disaster_impact>
+    rdf:type mlit:DisasterImpact ;
+    mlit:severityLevel 3 ;
+    mlit:impactRadius 15000 .
+
+<http://example.org/mlit/mesh/54360701/disaster_impact>
+    rdf:type mlit:DisasterImpact ;
+    mlit:severityLevel 4 ;
+    mlit:impactRadius 18000 .
+
+<http://example.org/mlit/mesh/54360702/disaster_impact>
+    rdf:type mlit:DisasterImpact ;
+    mlit:severityLevel 4 ;
+    mlit:impactRadius 20000 .
+
+<http://example.org/mlit/mesh/54360703/disaster_impact>
+    rdf:type mlit:DisasterImpact ;
+    mlit:severityLevel 3 ;
+    mlit:impactRadius 12000 .
+
+<http://example.org/mlit/mesh/54360704/disaster_impact>
+    rdf:type mlit:DisasterImpact ;
+    mlit:severityLevel 2 ;
+    mlit:impactRadius 8000 .

@@ -9,6 +9,12 @@
     "dev": "ts-node src/main.ts",
     "query": "node dist/query-tool.js",
     "query:dev": "ts-node src/query-tool.ts",
+    "sparql": "ts-node src/sparql-executor.ts",
+    "sparql:simple": "npm run sparql -- --file ./sample-sparql/disaster-satellite-priority-simple.sparql --endpoint http://localhost:8080/rdf4j-server --repository test",
+    "sparql:disaster": "npm run sparql -- --file ./sample-sparql/disaster-satellite-priority-query-fixed.sparql --endpoint http://localhost:8080/rdf4j-server --repository test",
+    "sparql:sample": "npm run sparql -- --file ./sample-sparql/sample-queries-fixed.sparql --endpoint http://localhost:8080/rdf4j-server --repository test",
+    "sparql:basic": "npm run sparql -- --file ./sample-sparql/basic-disaster-query.sparql --endpoint http://localhost:8080/rdf4j-server --repository test",
+    "sparql:enhanced": "npm run sparql -- --file ./sample-sparql/enhanced-disaster-query.sparql --endpoint http://localhost:8080/rdf4j-server --repository test",
     "clean": "rm -rf dist",
     "lint": "eslint src/**/*.ts",
     "test": "jest"

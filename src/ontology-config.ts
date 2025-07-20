@@ -55,6 +55,15 @@ export interface MLITPredicates {
   readonly landUseCode: string;
   readonly landUseArea: string;
   readonly landUsePercentage: string;
+  // Disaster predicates
+  readonly hasDisasterData: string;
+  readonly disasterType: string;
+  readonly severityLevel: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly affectedArea: string;
+  readonly impactRadius: string;
+  readonly priorityScore: string;
 }
 
 export interface MLITClasses {
@@ -62,6 +71,8 @@ export interface MLITClasses {
   readonly Mesh: string;
   readonly AdministrativeArea: string;
   readonly LandUseData: string;
+  readonly DisasterEvent: string;
+  readonly SatelliteImagingArea: string;
 }
 
 export const RDF_PREFIXES: RDFPrefixes = {
@@ -116,6 +127,15 @@ export const MLIT_PREDICATES: MLITPredicates = {
   landUseCode: `${RDF_PREFIXES.mlit}landUseCode`,
   landUseArea: `${RDF_PREFIXES.mlit}landUseArea`,
   landUsePercentage: `${RDF_PREFIXES.mlit}landUsePercentage`,
+  // Disaster predicates
+  hasDisasterData: `${RDF_PREFIXES.mlit}hasDisasterData`,
+  disasterType: `${RDF_PREFIXES.mlit}disasterType`,
+  severityLevel: `${RDF_PREFIXES.mlit}severityLevel`,
+  startDate: `${RDF_PREFIXES.mlit}startDate`,
+  endDate: `${RDF_PREFIXES.mlit}endDate`,
+  affectedArea: `${RDF_PREFIXES.mlit}affectedArea`,
+  impactRadius: `${RDF_PREFIXES.mlit}impactRadius`,
+  priorityScore: `${RDF_PREFIXES.mlit}priorityScore`,
 } as const;
 
 export const MLIT_CLASSES: MLITClasses = {
@@ -123,6 +143,8 @@ export const MLIT_CLASSES: MLITClasses = {
   Mesh: `${RDF_PREFIXES.mlit}Mesh`,
   AdministrativeArea: `${RDF_PREFIXES.mlit}AdministrativeArea`,
   LandUseData: `${RDF_PREFIXES.mlit}LandUseData`,
+  DisasterEvent: `${RDF_PREFIXES.mlit}DisasterEvent`,
+  SatelliteImagingArea: `${RDF_PREFIXES.mlit}SatelliteImagingArea`,
 } as const;
 
 export const WGS84_CRS_URI = '<http://www.opengis.net/def/crs/OGC/1.3/CRS84>';

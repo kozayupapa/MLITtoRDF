@@ -1,0 +1,25 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# サンプルクエリ1: 人口データの基本統計
+
+SELECT ?meshId ?totalPopulation ?elderlyPopulation ?elderlyRatio
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        mlit:hasPopulationData ?popSnapshot .
+  
+  ?popSnapshot mlit:totalPopulation ?totalPopulation ;
+               mlit:ageCategory65Plus ?elderlyPopulation .
+  
+  # 高齢化率を計算
+  BIND((?elderlyPopulation / ?totalPopulation) * 100 AS ?elderlyRatio)
+  
+  # 人口1000人以上のメッシュのみ
+  FILTER(?totalPopulation > 1000)
+}
+ORDER BY DESC(?elderlyRatio)
+LIMIT 10

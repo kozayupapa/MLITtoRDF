@@ -1,0 +1,73 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# 災害発生時の衛星撮像エリア優先度Top5クエリ（修正版）
+# 能登地方2024年9月大雨災害を例とした緊急対応支援クエリ
+
+SELECT ?meshId ?coordinates ?priorityScore ?totalPopulation ?elderlyPopulation 
+       (GROUP_CONCAT(DISTINCT ?landCategory; separator=", ") AS ?landUseTypes)
+       (SUM(?landAreaValue) AS ?totalLandArea)
+WHERE {
+  # 災害イベント情報の定義（能登地方2024年9月大雨）
+  VALUES (?disasterType ?severityLevel ?startDate ?endDate ?centerLat ?centerLng ?impactRadius) {
+    ("heavy_rain" 4 "2024-09-01"^^xsd:date "2024-09-05"^^xsd:date 37.0000 136.8000 20000)
+  }
+  
+  # メッシュデータを取得
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?meshGeom .
+  
+  # WKT座標文字列を取得
+  ?meshGeom geo:wktLiteral ?wkt .
+  BIND(STR(?wkt) AS ?coordinates)
+  
+  # 能登地方の範囲フィルタ（簡易的な文字列マッチング）
+  FILTER(CONTAINS(?coordinates, "136.") || CONTAINS(?coordinates, "137."))
+  FILTER(CONTAINS(?coordinates, "36.") || CONTAINS(?coordinates, "37."))
+  
+  # 人口データの取得
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:totalPopulation ?totalPopulation ;
+                 mlit:ageCategory65Plus ?elderlyPopulation .
+  }
+  
+  # 土地利用データの取得
+  OPTIONAL {
+    ?mesh mlit:hasLandUseData ?landUse .
+    ?landUse mlit:landUseCategory ?landCategory ;
+             mlit:landUseArea ?landAreaValue .
+    
+    # 災害リスクが高い土地利用のみフィルタ
+    FILTER(?landCategory IN ("建物用地", "森林", "河川地及び湖沼", "住宅地", "商業地", "工業地"))
+  }
+  
+  # 優先度スコア計算
+  BIND(
+    # 人口密度スコア（高齢者2倍重み付け）40%
+    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.4 +
+    
+    # 土地利用面積スコア（被害想定）60%
+    (COALESCE(?landAreaValue, 0) / 1000000) * 0.6
+    
+    AS ?priorityScore
+  )
+  
+  # 最低閾値フィルタ
+  FILTER(?priorityScore > 100)
+}
+GROUP BY ?meshId ?coordinates ?priorityScore ?totalPopulation ?elderlyPopulation
+ORDER BY DESC(?priorityScore)
+LIMIT 5
+
+# クエリ説明:
+# 1. 災害パラメータ: 能登地方（37.0N, 136.8E）で2024年9月に発生した大雨災害（深刻度4、影響半径20km）
+# 2. メッシュデータから人口・土地利用情報を集計
+# 3. 優先度スコア計算:
+#    - 人口密度（高齢者2倍重み付け）: 40%
+#    - 土地利用面積（災害リスク評価）: 60%
+# 4. 優先度上位5エリアを抽出

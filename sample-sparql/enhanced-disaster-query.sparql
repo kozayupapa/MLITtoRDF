@@ -1,0 +1,53 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# 災害対応強化クエリ - 人口と土地利用の詳細分析
+
+SELECT ?meshId ?totalPopulation ?elderlyPopulation 
+       (GROUP_CONCAT(DISTINCT ?landCategory; separator=", ") AS ?landUseTypes)
+       (SUM(?landArea) AS ?totalLandArea)
+       ?priorityScore
+WHERE {
+  # メッシュデータの取得
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId .
+  
+  # 人口データの取得
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:totalPopulation ?totalPop ;
+                 mlit:ageCategory65Plus ?elderlyPop .
+    BIND(COALESCE(?totalPop, 0) AS ?totalPopulation)
+    BIND(COALESCE(?elderlyPop, 0) AS ?elderlyPopulation)
+  }
+  
+  # 土地利用データの取得
+  OPTIONAL {
+    ?mesh mlit:hasLandUseData ?landUse .
+    ?landUse mlit:landUseCategory ?landCategory ;
+             mlit:landUseArea ?landArea .
+    
+    # 災害リスクが高い土地利用のみフィルタ
+    FILTER(?landCategory IN ("建物用地", "森林", "河川地及び湖沼", "住宅地", "商業地"))
+  }
+  
+  # 優先度スコア計算
+  BIND(
+    # 人口密度スコア（高齢者2倍重み付け）50%
+    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.5 +
+    
+    # 土地利用面積スコア 50%
+    (COALESCE(?landArea, 0) / 1000000) * 0.5
+    
+    AS ?priorityScore
+  )
+  
+  # 最低閾値フィルタ
+  FILTER(COALESCE(?totalPopulation, 0) > 1000 || COALESCE(?landArea, 0) > 10000)
+}
+GROUP BY ?meshId ?totalPopulation ?elderlyPopulation ?priorityScore
+ORDER BY DESC(?priorityScore)
+LIMIT 15

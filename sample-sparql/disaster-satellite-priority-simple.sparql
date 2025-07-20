@@ -1,0 +1,102 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# 災害発生時の衛星撮像エリア優先度Top5クエリ（簡易版）
+# 能登地方2024年9月大雨災害を例とした緊急対応支援
+
+SELECT ?meshId ?coordinates ?lat ?lng ?priorityScore ?totalPopulation ?elderlyPopulation ?buildingArea ?forestArea ?waterArea
+WHERE {
+  # 能登地方の対象メッシュ（緯度36.8-37.2度、経度136.6-137.0度の範囲）
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geom .
+  
+  # WKT座標から緯度経度を抽出（簡易的な文字列処理）
+  ?geom geo:wktLiteral ?wkt .
+  
+  # 座標範囲フィルタ（能登地方周辺）
+  FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))
+  FILTER(CONTAINS(STR(?wkt), "36.") || CONTAINS(STR(?wkt), "37."))
+  
+  # 人口データの取得
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:totalPopulation ?totalPop ;
+                 mlit:ageCategory65Plus ?elderlyPop .
+    BIND(COALESCE(?totalPop, 0) AS ?totalPopulation)
+    BIND(COALESCE(?elderlyPop, 0) AS ?elderlyPopulation)
+  }
+  
+  # 建物用地面積の取得
+  OPTIONAL {
+    ?mesh mlit:hasLandUseData ?buildingLand .
+    ?buildingLand mlit:landUseCategory "建物用地" ;
+                  mlit:landUseArea ?buildingAreaValue .
+    BIND(?buildingAreaValue AS ?buildingArea)
+  }
+  
+  # 森林面積の取得
+  OPTIONAL {
+    ?mesh mlit:hasLandUseData ?forestLand .
+    ?forestLand mlit:landUseCategory "森林" ;
+                mlit:landUseArea ?forestAreaValue .
+    BIND(?forestAreaValue AS ?forestArea)
+  }
+  
+  # 水域面積の取得
+  OPTIONAL {
+    ?mesh mlit:hasLandUseData ?waterLand .
+    ?waterLand mlit:landUseCategory "河川地及び湖沼" ;
+               mlit:landUseArea ?waterAreaValue .
+    BIND(?waterAreaValue AS ?waterArea)
+  }
+  
+  # 優先度スコア計算
+  BIND(
+    # 人口密度スコア（高齢者2倍重み付け）40%
+    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.4 +
+    
+    # 建物用地面積スコア（被害想定）30%
+    (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+    
+    # 森林面積スコア（土砂災害リスク）20%
+    (COALESCE(?forestArea, 0) / 1000000) * 0.2 +
+    
+    # 水域面積スコア（洪水リスク）10%
+    (COALESCE(?waterArea, 0) / 1000000) * 0.1
+    
+    AS ?priorityScore
+  )
+  
+  # 座標情報（WKT文字列として保持）
+  BIND(STR(?wkt) AS ?coordinates)
+  
+  # 簡易的な座標値（固定値として能登地方の中心）
+  BIND(37.0 AS ?lat)
+  BIND(136.8 AS ?lng)
+  
+  # 最低閾値フィルタ（優先度スコア > 50）
+  FILTER(?priorityScore > 50)
+}
+ORDER BY DESC(?priorityScore)
+LIMIT 5
+
+# 災害情報サンプル:
+# 災害タイプ: 大雨
+# 発生地域: 能登地方（石川県）
+# 発生期間: 2024年9月1日-9月5日
+# 深刻度: レベル4（甚大）
+# 影響半径: 20km
+
+# 優先度計算基準:
+# 1. 人口密度（40%）- 避難・救助の緊急性
+# 2. 建物用地面積（30%）- 被害規模の想定
+# 3. 森林面積（20%）- 土砂災害リスク
+# 4. 水域面積（10%）- 洪水リスク
+
+# 出力: 10km四方の撮像エリア候補Top5
+# - メッシュID、中心座標（緯度経度）
+# - 優先度スコア、人口・土地利用データ
