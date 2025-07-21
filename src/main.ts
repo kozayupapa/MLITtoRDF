@@ -15,11 +15,6 @@ import {
   TransformationResult,
 } from './geo-transformer';
 import { RDF4JBulkLoader, LoadResult } from './rdf-loader';
-import {
-  parsePopulationXML,
-  createPopulationLayer,
-} from './util/mapDataLoader';
-import { saveDataToRDF4J, RDF4JStore } from './util/geoSPARQLUtil';
 
 interface CLIOptions {
   filePaths: string[];
@@ -33,7 +28,7 @@ interface CLIOptions {
   testConnection: boolean;
   dryRun: boolean;
   includePopulationSnapshots: boolean;
-  dataType: 'geojson' | 'xml-population' | 'landuse-geojson' | 'auto';
+  dataType: 'population-geojson' | 'landuse-geojson' | 'auto';
 }
 
 /**
@@ -127,10 +122,7 @@ class MLITGeoJSONToRDF4J {
     if (this.options.dataType === 'auto') {
       // Check the first file to determine data type
       const firstFile = filePaths[0].toLowerCase();
-      if (firstFile.endsWith('.xml')) {
-        this.options.dataType = 'xml-population';
-        this.logger.info('Auto-detected XML population data format');
-      } else if (
+      if (
         firstFile.endsWith('.geojson') ||
         firstFile.endsWith('.json')
       ) {
@@ -146,22 +138,22 @@ class MLITGeoJSONToRDF4J {
               this.options.dataType = 'landuse-geojson';
               this.logger.info('Auto-detected Land Use GeoJSON data format');
             } else {
-              this.options.dataType = 'geojson';
-              this.logger.info('Auto-detected GeoJSON data format');
+              this.options.dataType = 'population-geojson';
+              this.logger.info('Auto-detected Population GeoJSON data format');
             }
           } else {
-            this.options.dataType = 'geojson';
-            this.logger.info('Auto-detected GeoJSON data format');
+            this.options.dataType = 'population-geojson';
+            this.logger.info('Auto-detected Population GeoJSON data format');
           }
         } catch (error) {
-          this.logger.warn('Error parsing JSON file for auto-detection, defaulting to GeoJSON');
-          this.options.dataType = 'geojson';
+          this.logger.warn('Error parsing JSON file for auto-detection, defaulting to Population GeoJSON');
+          this.options.dataType = 'population-geojson';
         }
       } else {
         this.logger.warn(
-          'Unknown file extension, defaulting to GeoJSON processing'
+          'Unknown file extension, defaulting to Population GeoJSON processing'
         );
-        this.options.dataType = 'geojson';
+        this.options.dataType = 'population-geojson';
       }
     }
 
@@ -169,14 +161,7 @@ class MLITGeoJSONToRDF4J {
     for (const filePath of filePaths) {
       const fileExt = filePath.toLowerCase();
       if (
-        this.options.dataType === 'xml-population' &&
-        !fileExt.endsWith('.xml')
-      ) {
-        this.logger.warn(
-          `XML population data type specified but file ${filePath} does not have .xml extension`
-        );
-      } else if (
-        (this.options.dataType === 'geojson' || this.options.dataType === 'landuse-geojson') &&
+        (this.options.dataType === 'population-geojson' || this.options.dataType === 'landuse-geojson') &&
         !fileExt.endsWith('.geojson') &&
         !fileExt.endsWith('.json')
       ) {
@@ -272,12 +257,7 @@ class MLITGeoJSONToRDF4J {
     transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader
   ): Promise<LoadResult | null> {
-    // XML人口データの場合は別の処理パイプラインを使用
-    if (this.options.dataType === 'xml-population') {
-      return await this.processXMLPopulationData();
-    }
-
-    // 同期GeoJSON処理パイプライン
+    // GeoJSON処理パイプライン
     this.logger.info('Starting data processing pipeline...');
 
     const allTriples: RDFTriple[] = [];
@@ -370,101 +350,6 @@ class MLITGeoJSONToRDF4J {
     }
   }
 
-  /**
-   * XML人口データ処理パイプライン
-   */
-  private async processXMLPopulationData(): Promise<LoadResult | null> {
-    this.logger.info('Starting XML population data processing pipeline...');
-
-    try {
-      // RDF4JStore インターフェースを作成
-      const rdf4jStore: RDF4JStore = {
-        baseUrl: this.options.rdf4jEndpoint,
-        repositoryId: this.options.repositoryId,
-      };
-
-      // 人口データをXMLから読み込み、GeoJSONに変換
-      this.logger.info('Parsing XML population data...');
-      const populationData = await parsePopulationXML(
-        this.options.filePaths[0]
-      );
-      this.logger.info(
-        `✅ Parsed ${populationData.length} population mesh records`
-      );
-
-      if (populationData.length === 0) {
-        this.logger.warn('No population data found in XML file');
-        return null;
-      }
-
-      // maxFeatures制限を適用
-      const limitedData = this.options.maxFeatures
-        ? populationData.slice(
-            this.options.skipFeatures || 0,
-            (this.options.skipFeatures || 0) + this.options.maxFeatures
-          )
-        : populationData.slice(this.options.skipFeatures || 0);
-
-      this.logger.info(
-        `Processing ${limitedData.length} population records (after limits)`
-      );
-
-      // GeoJSONに変換
-      const geoJSON = createPopulationLayer(limitedData);
-      this.logger.info(
-        `✅ Created GeoJSON with ${geoJSON.features.length} features`
-      );
-
-      if (this.options.dryRun) {
-        this.logger.info('Dry run mode - skipping RDF4J upload');
-        return {
-          totalTriples: geoJSON.features.length * 10, // 推定値
-          totalBatches: Math.ceil(
-            geoJSON.features.length / this.options.batchSize
-          ),
-          totalTime: 0,
-          averageBatchTime: 0,
-          errors: [],
-        };
-      }
-
-      // RDF4Jに保存
-      this.logger.info('Saving population data to RDF4J...');
-      const startTime = Date.now();
-
-      const emptyCollection = {
-        type: 'FeatureCollection' as const,
-        features: [],
-      };
-      const tripleCount = await saveDataToRDF4J(
-        rdf4jStore,
-        {
-          populationData: geoJSON,
-          landUseData: emptyCollection,
-          schoolData: emptyCollection,
-          medicalData: emptyCollection,
-          disasterData: emptyCollection,
-        },
-        this.options.batchSize
-      );
-
-      const totalTime = Date.now() - startTime;
-
-      this.logger.info(`✅ Successfully saved ${tripleCount} triples to RDF4J`);
-
-      return {
-        totalTriples: tripleCount,
-        totalBatches: Math.ceil(tripleCount / this.options.batchSize),
-        totalTime,
-        averageBatchTime:
-          totalTime / Math.ceil(tripleCount / this.options.batchSize),
-        errors: [],
-      };
-    } catch (error) {
-      this.logger.error('XML population data processing failed:', error);
-      throw error;
-    }
-  }
 
   /**
    * Log configuration details
@@ -546,7 +431,7 @@ async function main(): Promise<void> {
     .requiredOption('--repositoryId <id>', 'RDF4J repository identifier')
     .option(
       '--dataType <type>',
-      'Input data type: geojson, xml-population, landuse-geojson, or auto',
+      'Input data type: population-geojson, landuse-geojson, or auto',
       'auto'
     )
     .option(
@@ -619,7 +504,7 @@ async function main(): Promise<void> {
   }
 
   // Validate data type
-  const validDataTypes = ['geojson', 'xml-population', 'landuse-geojson', 'auto'];
+  const validDataTypes = ['population-geojson', 'landuse-geojson', 'auto'];
   if (!validDataTypes.includes(options.dataType)) {
     console.error(
       `Invalid data type: ${
