@@ -152,10 +152,10 @@ export class GeoSPARQLTransformer {
       );
     }
 
-    // Add population snapshots if requested
+    // Add population snapshots if requested (filtered to 2025 only for performance)
     const populationSnapshotIRIs: string[] = [];
     if (includePopulationSnapshots) {
-      // Extract all available years from properties
+      // Extract 2025 year data only to reduce triple count and improve RDF4J performance
       const availableYears = this.extractAllYearsFromProperties(
         feature.properties
       );
@@ -475,21 +475,32 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Extract all years from feature properties
+   * Extract all years from feature properties - Now filters to only include 2025 data
    */
   private extractAllYearsFromProperties(properties: any): string[] {
-    // Look for population data properties with year suffixes
+    // Only return 2025 to reduce triple count and improve RDF4J performance
     const yearPattern = /PTN_(\d{4})/;
-    const years = new Set<string>();
+    const availableYears = new Set<string>();
 
+    // First, check what years are actually available in the data
     for (const key of Object.keys(properties)) {
       const match = key.match(yearPattern);
       if (match) {
-        years.add(match[1]);
+        availableYears.add(match[1]);
       }
     }
 
-    return Array.from(years).sort();
+    // Only return 2025 if it exists in the data, otherwise return empty array
+    if (availableYears.has('2025')) {
+      return ['2025'];
+    }
+    
+    // Log if 2025 data is not found but other years exist
+    if (availableYears.size > 0) {
+      this.logger?.debug(`2025 data not found, available years: ${Array.from(availableYears).join(', ')}`);
+    }
+
+    return [];
   }
 
   /**
