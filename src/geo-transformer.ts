@@ -256,7 +256,7 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Create population snapshot triples
+   * Create population snapshot triples (optimized for essential data only)
    */
   private createPopulationSnapshot(
     properties: any,
@@ -297,46 +297,8 @@ export class GeoSPARQLTransformer {
       );
     }
 
-    // Map age group properties
-    const ageGroupMappings = [
-      { property: `PT01_${year}`, predicate: MLIT_PREDICATES.ageGroup0_4 },
-      { property: `PT02_${year}`, predicate: MLIT_PREDICATES.ageGroup5_9 },
-      { property: `PT03_${year}`, predicate: MLIT_PREDICATES.ageGroup10_14 },
-      { property: `PT04_${year}`, predicate: MLIT_PREDICATES.ageGroup15_19 },
-      { property: `PT05_${year}`, predicate: MLIT_PREDICATES.ageGroup20_24 },
-      { property: `PT06_${year}`, predicate: MLIT_PREDICATES.ageGroup25_29 },
-      { property: `PT07_${year}`, predicate: MLIT_PREDICATES.ageGroup30_34 },
-      { property: `PT08_${year}`, predicate: MLIT_PREDICATES.ageGroup35_39 },
-      { property: `PT09_${year}`, predicate: MLIT_PREDICATES.ageGroup40_44 },
-      { property: `PT10_${year}`, predicate: MLIT_PREDICATES.ageGroup45_49 },
-      { property: `PT11_${year}`, predicate: MLIT_PREDICATES.ageGroup50_54 },
-      { property: `PT12_${year}`, predicate: MLIT_PREDICATES.ageGroup55_59 },
-      { property: `PT13_${year}`, predicate: MLIT_PREDICATES.ageGroup60_64 },
-      { property: `PT14_${year}`, predicate: MLIT_PREDICATES.ageGroup65_69 },
-      { property: `PT15_${year}`, predicate: MLIT_PREDICATES.ageGroup70_74 },
-      { property: `PT16_${year}`, predicate: MLIT_PREDICATES.ageGroup75_79 },
-      { property: `PT17_${year}`, predicate: MLIT_PREDICATES.ageGroup80_84 },
-      { property: `PT18_${year}`, predicate: MLIT_PREDICATES.ageGroup85_89 },
-      { property: `PT19_${year}`, predicate: MLIT_PREDICATES.ageGroup90_94 },
-      { property: `PT20_${year}`, predicate: MLIT_PREDICATES.ageGroup95plus },
-    ];
-
-    // Add age group data
-    for (const mapping of ageGroupMappings) {
-      const value = properties[mapping.property];
-      if (value !== undefined && value !== null) {
-        triples.push(
-          this.createTriple(
-            snapshotIRI,
-            mapping.predicate,
-            this.createDoubleLiteral(value)
-          )
-        );
-      }
-    }
-
-    // Add age category data (PTA, PTB, PTC, PTD, PTE)
-    const ageCategoryMappings = [
+    // Add only essential age category data (PTA, PTB, PTC, PTD, PTE) - no individual age groups or ratios
+    const essentialAgeCategoryMappings = [
       { property: `PTA_${year}`, predicate: MLIT_PREDICATES.ageCategory0_14 },
       { property: `PTB_${year}`, predicate: MLIT_PREDICATES.ageCategory15_64 },
       { property: `PTC_${year}`, predicate: MLIT_PREDICATES.ageCategory65Plus },
@@ -350,7 +312,7 @@ export class GeoSPARQLTransformer {
       },
     ];
 
-    for (const mapping of ageCategoryMappings) {
+    for (const mapping of essentialAgeCategoryMappings) {
       const value = properties[mapping.property];
       if (value !== undefined && value !== null) {
         triples.push(
@@ -363,27 +325,9 @@ export class GeoSPARQLTransformer {
       }
     }
 
-    // Add ratio data if available
-    const ratioMappings = [
-      { property: `RTA_${year}`, predicate: MLIT_PREDICATES.ratioAge0_14 },
-      { property: `RTB_${year}`, predicate: MLIT_PREDICATES.ratioAge15_64 },
-      { property: `RTC_${year}`, predicate: MLIT_PREDICATES.ratioAge65Plus },
-      { property: `RTD_${year}`, predicate: MLIT_PREDICATES.ratioAge75plus },
-      { property: `RTE_${year}`, predicate: MLIT_PREDICATES.ratioAge80plus },
-    ];
-
-    for (const mapping of ratioMappings) {
-      const value = properties[mapping.property];
-      if (value !== undefined && value !== null) {
-        triples.push(
-          this.createTriple(
-            snapshotIRI,
-            mapping.predicate,
-            this.createDoubleLiteral(value)
-          )
-        );
-      }
-    }
+    // Removed individual age group data (PT01-PT20) to reduce triple count by ~20 properties per snapshot
+    // Removed ratio data (RTA-RTE) to further reduce triple count by ~5 properties per snapshot
+    // This optimization reduces population triples by approximately 75% while keeping essential data for disaster analysis
 
     return triples;
   }
