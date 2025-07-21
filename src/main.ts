@@ -85,7 +85,6 @@ class MLITGeoJSONToRDF4J {
       await this.validateInputs();
 
       // Initialize components
-      const parser = this.createParser();
       const transformer = this.createTransformer();
       const loader = this.createLoader();
 
@@ -95,7 +94,7 @@ class MLITGeoJSONToRDF4J {
       }
 
       // Process the data
-      const result = await this.processData(parser, transformer, loader);
+      const result = await this.processData(transformer, loader);
 
       // Log final results
       this.logResults(result, Date.now() - startTime);
@@ -122,19 +121,20 @@ class MLITGeoJSONToRDF4J {
     if (this.options.dataType === 'auto') {
       // Check the first file to determine data type
       const firstFile = filePaths[0].toLowerCase();
-      if (
-        firstFile.endsWith('.geojson') ||
-        firstFile.endsWith('.json')
-      ) {
+      if (firstFile.endsWith('.geojson') || firstFile.endsWith('.json')) {
         // Auto-detect between regular geojson and land use geojson by checking content
         try {
-          const sampleContent = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
+          const sampleContent = JSON.parse(
+            fs.readFileSync(filePaths[0], 'utf8')
+          );
           if (sampleContent.features && sampleContent.features.length > 0) {
             const firstFeature = sampleContent.features[0];
-            if (firstFeature.properties && 
-                (firstFeature.properties.田!== undefined || 
-                 firstFeature.properties.森林 !== undefined ||
-                 firstFeature.properties.メッシュ !== undefined)) {
+            if (
+              firstFeature.properties &&
+              (firstFeature.properties.田 !== undefined ||
+                firstFeature.properties.森林 !== undefined ||
+                firstFeature.properties.メッシュ !== undefined)
+            ) {
               this.options.dataType = 'landuse-geojson';
               this.logger.info('Auto-detected Land Use GeoJSON data format');
             } else {
@@ -146,7 +146,9 @@ class MLITGeoJSONToRDF4J {
             this.logger.info('Auto-detected Population GeoJSON data format');
           }
         } catch (error) {
-          this.logger.warn('Error parsing JSON file for auto-detection, defaulting to Population GeoJSON');
+          this.logger.warn(
+            'Error parsing JSON file for auto-detection, defaulting to Population GeoJSON'
+          );
           this.options.dataType = 'population-geojson';
         }
       } else {
@@ -161,7 +163,8 @@ class MLITGeoJSONToRDF4J {
     for (const filePath of filePaths) {
       const fileExt = filePath.toLowerCase();
       if (
-        (this.options.dataType === 'population-geojson' || this.options.dataType === 'landuse-geojson') &&
+        (this.options.dataType === 'population-geojson' ||
+          this.options.dataType === 'landuse-geojson') &&
         !fileExt.endsWith('.geojson') &&
         !fileExt.endsWith('.json')
       ) {
@@ -190,18 +193,6 @@ class MLITGeoJSONToRDF4J {
     }
 
     this.logger.info('Input validation completed successfully');
-  }
-
-  /**
-   * Create and configure the GeoJSON parser
-   */
-  private createParser(): GeoJSONSyncParser {
-    return new GeoJSONSyncParser({
-      inputFilePaths: this.options.filePaths,
-      maxFeatures: this.options.maxFeatures,
-      skipFeatures: this.options.skipFeatures,
-      logger: this.logger,
-    });
   }
 
   /**
@@ -253,11 +244,12 @@ class MLITGeoJSONToRDF4J {
    * Main data processing pipeline - Memory-efficient sequential processing
    */
   private async processData(
-    parser: GeoJSONSyncParser,
     transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader
   ): Promise<LoadResult | null> {
-    this.logger.info('Starting memory-efficient sequential data processing pipeline...');
+    this.logger.info(
+      'Starting memory-efficient sequential data processing pipeline...'
+    );
 
     let totalProcessedFeatures = 0;
     let totalTransformationErrors = 0;
@@ -268,13 +260,20 @@ class MLITGeoJSONToRDF4J {
 
     try {
       // Process files one by one to avoid memory issues
-      for (let fileIndex = 0; fileIndex < this.options.filePaths.length; fileIndex++) {
+      for (
+        let fileIndex = 0;
+        fileIndex < this.options.filePaths.length;
+        fileIndex++
+      ) {
         const filePath = this.options.filePaths[fileIndex];
-        this.logger.info(`Processing file ${fileIndex + 1}/${this.options.filePaths.length}: ${filePath}`);
+        this.logger.info(
+          `Processing file ${fileIndex + 1}/${
+            this.options.filePaths.length
+          }: ${filePath}`
+        );
 
         const fileResult = await this.processFileSequentially(
           filePath,
-          fileIndex,
           transformer,
           loader,
           totalProcessedFeatures
@@ -289,7 +288,9 @@ class MLITGeoJSONToRDF4J {
         allErrors.push(...fileResult.errors);
 
         this.logger.info(
-          `File ${fileIndex + 1} completed: ${fileResult.processedFeatures} features, ${fileResult.uploadedTriples} triples`
+          `File ${fileIndex + 1} completed: ${
+            fileResult.processedFeatures
+          } features, ${fileResult.uploadedTriples} triples`
         );
 
         // Force garbage collection hint
@@ -315,7 +316,6 @@ class MLITGeoJSONToRDF4J {
         averageBatchTime: totalBatches > 0 ? totalTime / totalBatches : 0,
         errors: allErrors,
       };
-
     } catch (error) {
       this.logger.error('Sequential data processing error:', error);
       throw error;
@@ -327,7 +327,6 @@ class MLITGeoJSONToRDF4J {
    */
   private async processFileSequentially(
     filePath: string,
-    fileIndex: number,
     transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader,
     globalFeatureOffset: number
@@ -357,7 +356,9 @@ class MLITGeoJSONToRDF4J {
 
       // Parse features from this file only
       const parsedFeatures = singleFileParser.parseAllFeatures();
-      this.logger.info(`Parsed ${parsedFeatures.length} features from ${filePath}`);
+      this.logger.info(
+        `Parsed ${parsedFeatures.length} features from ${filePath}`
+      );
 
       if (parsedFeatures.length === 0) {
         this.logger.warn(`No valid features found in ${filePath}`);
@@ -375,25 +376,35 @@ class MLITGeoJSONToRDF4J {
       const batchSize = Math.min(this.options.batchSize, 500); // Limit batch size for memory
       const featureBatches = this.chunkArray(parsedFeatures, batchSize);
 
-      for (let batchIndex = 0; batchIndex < featureBatches.length; batchIndex++) {
+      for (
+        let batchIndex = 0;
+        batchIndex < featureBatches.length;
+        batchIndex++
+      ) {
         const featureBatch = featureBatches[batchIndex];
         const batchTriples: RDFTriple[] = [];
 
         this.logger.info(
-          `Processing batch ${batchIndex + 1}/${featureBatches.length} (${featureBatch.length} features) from ${filePath}`
+          `Processing batch ${batchIndex + 1}/${featureBatches.length} (${
+            featureBatch.length
+          } features) from ${filePath}`
         );
 
         // Transform features in this batch
         for (const data of featureBatch) {
           try {
-            const result: TransformationResult = transformer.transformFeature(data.feature);
+            const result: TransformationResult = transformer.transformFeature(
+              data.feature
+            );
             batchTriples.push(...result.triples);
             processedFeatures++;
 
             // Log progress periodically
             if ((globalFeatureOffset + processedFeatures) % 1000 === 0) {
               this.logger.info(
-                `Transformed ${globalFeatureOffset + processedFeatures} total features`
+                `Transformed ${
+                  globalFeatureOffset + processedFeatures
+                } total features`
               );
             }
           } catch (error) {
@@ -417,28 +428,33 @@ class MLITGeoJSONToRDF4J {
             const startTime = Date.now();
             await loader.loadTriples(batchTriples);
             const batchTime = Date.now() - startTime;
-            
+
             uploadedTriples += batchTriples.length;
             batches++;
             uploadTime += batchTime;
 
             this.logger.info(
-              `Uploaded batch ${batchIndex + 1}: ${batchTriples.length} triples in ${batchTime}ms`
+              `Uploaded batch ${batchIndex + 1}: ${
+                batchTriples.length
+              } triples in ${batchTime}ms`
             );
           } catch (error) {
-            const errorMsg = `Failed to upload batch ${batchIndex + 1} from ${filePath}: ${error}`;
+            const errorMsg = `Failed to upload batch ${
+              batchIndex + 1
+            } from ${filePath}: ${error}`;
             this.logger.error(errorMsg);
             errors.push(errorMsg);
           }
         } else if (batchTriples.length > 0 && this.options.dryRun) {
           uploadedTriples += batchTriples.length;
-          this.logger.info(`Dry run: would upload ${batchTriples.length} triples`);
+          this.logger.info(
+            `Dry run: would upload ${batchTriples.length} triples`
+          );
         }
 
         // Clear batch data to free memory
         batchTriples.length = 0;
       }
-
     } catch (error) {
       const errorMsg = `Error processing file ${filePath}: ${error}`;
       this.logger.error(errorMsg);
@@ -465,7 +481,6 @@ class MLITGeoJSONToRDF4J {
     }
     return chunks;
   }
-
 
   /**
    * Log configuration details
