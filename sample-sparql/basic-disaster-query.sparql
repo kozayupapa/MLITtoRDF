@@ -4,46 +4,44 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-# 基本的な災害対応クエリ - 人口と土地利用データの組み合わせ
+# 基本的な災害対応クエリ（最適化版）- 2025年人口 + 直接土地利用プロパティ
 
-SELECT ?meshId ?totalPopulation ?elderlyPopulation ?buildingArea ?forestArea ?priorityScore
+SELECT ?meshId ?totalPopulation ?elderlyPopulation ?superElderlyPopulation 
+       ?buildingArea ?forestArea ?waterBodyArea ?priorityScore
 WHERE {
   # メッシュデータの取得
   ?mesh rdf:type mlit:Mesh ;
         mlit:meshId ?meshId .
   
-  # 人口データの取得
+  # 2025年人口データの取得（最適化済み）
   OPTIONAL {
     ?mesh mlit:hasPopulationData ?popSnapshot .
-    ?popSnapshot mlit:totalPopulation ?totalPop ;
-                 mlit:ageCategory65Plus ?elderlyPop .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?totalPop ;
+                 mlit:ageCategory65Plus ?elderlyPop ;
+                 mlit:ageCategory75plus ?superElderlyPop .
     BIND(COALESCE(?totalPop, 0) AS ?totalPopulation)
     BIND(COALESCE(?elderlyPop, 0) AS ?elderlyPopulation)
+    BIND(COALESCE(?superElderlyPop, 0) AS ?superElderlyPopulation)
   }
   
-  # 建物用地面積の取得
-  OPTIONAL {
-    ?mesh mlit:hasLandUseData ?buildingLand .
-    ?buildingLand mlit:landUseCategory "建物用地" ;
-                  mlit:landUseArea ?buildingAreaValue .
-    BIND(?buildingAreaValue AS ?buildingArea)
-  }
+  # 土地利用データの取得（直接プロパティ、面積閾値>5000㎡適用済み）
+  OPTIONAL { ?mesh mlit:buildingLandArea ?buildingArea . }
+  OPTIONAL { ?mesh mlit:forestArea ?forestArea . }
+  OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyArea . }
   
-  # 森林面積の取得
-  OPTIONAL {
-    ?mesh mlit:hasLandUseData ?forestLand .
-    ?forestLand mlit:landUseCategory "森林" ;
-                mlit:landUseArea ?forestAreaValue .
-    BIND(?forestAreaValue AS ?forestArea)
-  }
-  
-  # 優先度スコア計算（簡易版）
+  # 優先度スコア計算（最適化版）
   BIND(
-    # 人口密度スコア（高齢者2倍重み付け）60%
-    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.6 +
+    # 人口密度スコア（高齢者重み付け: 65+は2倍, 75+は3倍）60%
+    (COALESCE(?totalPopulation, 0) * 1.0 + 
+     COALESCE(?elderlyPopulation, 0) * 2.0 +
+     COALESCE(?superElderlyPopulation, 0) * 3.0) * 0.6 +
     
-    # 建物用地面積スコア（被害想定）40%
-    (COALESCE(?buildingArea, 0) / 1000000) * 0.4
+    # 建物用地面積スコア（被害想定）30%
+    (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+    
+    # 森林面積スコア（土砂災害リスク）10%
+    (COALESCE(?forestArea, 0) / 1000000) * 0.1
     
     AS ?priorityScore
   )
@@ -52,4 +50,4 @@ WHERE {
   FILTER(?priorityScore > 10)
 }
 ORDER BY DESC(?priorityScore)
-LIMIT 10
+LIMIT 20

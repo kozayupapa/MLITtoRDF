@@ -4,50 +4,68 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-# 災害対応強化クエリ - 人口と土地利用の詳細分析
+# 災害対応強化クエリ（最適化版）- 2025年人口 + 直接土地利用プロパティ
 
-SELECT ?meshId ?totalPopulation ?elderlyPopulation 
-       (GROUP_CONCAT(DISTINCT ?landCategory; separator=", ") AS ?landUseTypes)
-       (SUM(?landArea) AS ?totalLandArea)
-       ?priorityScore
+SELECT ?meshId ?totalPopulation ?elderlyPopulation ?superElderlyPopulation
+       ?buildingArea ?forestArea ?waterBodyArea ?roadArea ?otherAgriculturalArea
+       ?riskCategory ?priorityScore
 WHERE {
   # メッシュデータの取得
   ?mesh rdf:type mlit:Mesh ;
         mlit:meshId ?meshId .
   
-  # 人口データの取得
+  # 2025年人口データの取得（最適化済み）
   OPTIONAL {
     ?mesh mlit:hasPopulationData ?popSnapshot .
-    ?popSnapshot mlit:totalPopulation ?totalPop ;
-                 mlit:ageCategory65Plus ?elderlyPop .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?totalPop ;
+                 mlit:ageCategory65Plus ?elderlyPop ;
+                 mlit:ageCategory75plus ?superElderlyPop ;
+                 mlit:ageCategory80plus ?ultraElderlyPop .
     BIND(COALESCE(?totalPop, 0) AS ?totalPopulation)
     BIND(COALESCE(?elderlyPop, 0) AS ?elderlyPopulation)
+    BIND(COALESCE(?superElderlyPop, 0) AS ?superElderlyPopulation)
   }
   
-  # 土地利用データの取得
-  OPTIONAL {
-    ?mesh mlit:hasLandUseData ?landUse .
-    ?landUse mlit:landUseCategory ?landCategory ;
-             mlit:landUseArea ?landArea .
-    
-    # 災害リスクが高い土地利用のみフィルタ
-    FILTER(?landCategory IN ("建物用地", "森林", "河川地及び湖沼", "住宅地", "商業地"))
-  }
+  # 土地利用データの取得（直接プロパティ、面積閾値>5000㎡適用済み）
+  OPTIONAL { ?mesh mlit:buildingLandArea ?buildingArea . }
+  OPTIONAL { ?mesh mlit:forestArea ?forestArea . }
+  OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyArea . }
+  OPTIONAL { ?mesh mlit:roadArea ?roadArea . }
+  OPTIONAL { ?mesh mlit:otherAgriculturalArea ?otherAgriculturalArea . }
   
-  # 優先度スコア計算
+  # リスクカテゴリ分類
   BIND(
-    # 人口密度スコア（高齢者2倍重み付け）50%
-    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.5 +
+    IF(COALESCE(?forestArea, 0) > 500000, "土砂災害高リスク",
+    IF(COALESCE(?waterBodyArea, 0) > 100000, "水害高リスク", 
+    IF(COALESCE(?buildingArea, 0) > 200000, "建物被害高リスク", "その他")))
+    AS ?riskCategory
+  )
+  
+  # 優先度スコア計算（多要素統合版）
+  BIND(
+    # 人口密度スコア（高齢者重み付け）40%
+    (COALESCE(?totalPopulation, 0) * 1.0 + 
+     COALESCE(?elderlyPopulation, 0) * 2.0 +
+     COALESCE(?superElderlyPopulation, 0) * 3.0) * 0.4 +
     
-    # 土地利用面積スコア 50%
-    (COALESCE(?landArea, 0) / 1000000) * 0.5
+    # 建物被害想定スコア 25%
+    (COALESCE(?buildingArea, 0) / 1000000) * 0.25 +
+    
+    # 土砂災害リスクスコア 20%
+    (COALESCE(?forestArea, 0) / 1000000) * 0.2 +
+    
+    # 水害リスクスコア 10%
+    (COALESCE(?waterBodyArea, 0) / 1000000) * 0.1 +
+    
+    # アクセス性スコア 5%
+    (COALESCE(?roadArea, 0) / 1000000) * 0.05
     
     AS ?priorityScore
   )
   
-  # 最低閾値フィルタ
-  FILTER(COALESCE(?totalPopulation, 0) > 1000 || COALESCE(?landArea, 0) > 10000)
+  # 最低閾値フィルタ（面積閾値により自動的にフィルタ済み）
+  FILTER(COALESCE(?totalPopulation, 0) > 500)
 }
-GROUP BY ?meshId ?totalPopulation ?elderlyPopulation ?priorityScore
 ORDER BY DESC(?priorityScore)
-LIMIT 15
+LIMIT 20

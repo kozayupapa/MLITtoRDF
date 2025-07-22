@@ -40,7 +40,7 @@ interface SPARQLResult {
  * Predefined query templates
  */
 const QUERY_TEMPLATES = {
-  // ダッシュボード用統計サマリー
+  // ダッシュボード用統計サマリー (最適化版: 2025年データのみ)
   dashboard: `
     PREFIX geo: <http://www.opengis.net/ont/geosparql#>
     PREFIX mlit: <http://example.org/mlit/ontology#>
@@ -50,9 +50,10 @@ const QUERY_TEMPLATES = {
       (COUNT(?mesh) AS ?totalMeshes)
       (SUM(?pop2020) AS ?totalPop2020)
       (SUM(?pop2025) AS ?totalPop2025)
-      (AVG(?elderlyRatio) AS ?avgElderlyRatio)
-      (MAX(?pop2020) AS ?maxPopDensity)
-      (MIN(?pop2020) AS ?minPopDensity)
+      (AVG(?elderly65Plus) AS ?avgElderly65Plus)
+      (AVG(?elderly75Plus) AS ?avgElderly75Plus)
+      (MAX(?pop2025) AS ?maxPopDensity)
+      (MIN(?pop2025) AS ?minPopDensity)
     WHERE {
       ?mesh rdf:type mlit:Mesh ;
             mlit:totalPopulation2020 ?pop2020 ;
@@ -60,18 +61,19 @@ const QUERY_TEMPLATES = {
       
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?pop2025 ;
-                mlit:ratioAge65Plus ?elderlyRatio .
+                mlit:ageCategory65Plus ?elderly65Plus ;
+                mlit:ageCategory75plus ?elderly75Plus .
       
-      FILTER(?pop2020 > {{minPopulation}})
+      FILTER(?pop2025 > {{minPopulation}})
     }`,
 
-  // 人口密度ランキング
+  // 人口密度ランキング (最適化版: 2025年データのみ)
   ranking: `
     PREFIX geo: <http://www.opengis.net/ont/geosparql#>
     PREFIX mlit: <http://example.org/mlit/ontology#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     
-    SELECT ?meshId ?population2020 ?pop2025 ?changeRate 
+    SELECT ?meshId ?population2020 ?pop2025 ?changeRate ?elderly65Plus ?elderly75Plus
            (REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\\\(\\\\(([0-9., ]+)\\\\)\\\\).*", "$1"), " ", ",") AS ?coordinates)
     WHERE {
       ?mesh rdf:type mlit:Mesh ;
@@ -81,104 +83,112 @@ const QUERY_TEMPLATES = {
             geo:hasGeometry ?geometry .
       
       ?geometry geo:wktLiteral ?wkt .
-      ?snapshot mlit:populationYear {{year}} ;
-                mlit:totalPopulation ?pop2025 .
+      ?snapshot mlit:populationYear 2025 ;
+                mlit:totalPopulation ?pop2025 ;
+                mlit:ageCategory65Plus ?elderly65Plus ;
+                mlit:ageCategory75plus ?elderly75Plus .
       
       BIND((?pop2025 - ?population2020) / ?population2020 AS ?changeRate)
       
-      FILTER(?population2020 > {{minPopulation}})
+      FILTER(?pop2025 > {{minPopulation}})
     }
-    ORDER BY DESC(?population2020)
+    ORDER BY DESC(?pop2025)
     LIMIT {{limit}}`,
 
-  // 高齢化分析
+  // 高齢化分析 (最適化版: 2025年データのみ、年齢カテゴリ使用)
   aging: `
     PREFIX geo: <http://www.opengis.net/ont/geosparql#>
     PREFIX mlit: <http://example.org/mlit/ontology#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     
-    SELECT ?meshId ?population2020 ?elderlyRatio2025 ?elderlyRatio2030 ?ratioIncrease 
+    SELECT ?meshId ?population2025 ?elderly65Plus ?elderly75Plus ?elderly80Plus ?elderlyRatio
            (REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\\\(\\\\(([0-9., ]+)\\\\)\\\\).*", "$1"), " ", ",") AS ?coordinates)
     WHERE {
       ?mesh rdf:type mlit:Mesh ;
             mlit:meshId ?meshId ;
-            mlit:totalPopulation2020 ?population2020 ;
-            mlit:hasPopulationData ?snapshot2025 ;
-            mlit:hasPopulationData ?snapshot2030 ;
+            mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
       ?geometry geo:wktLiteral ?wkt .
       
-      ?snapshot2025 mlit:populationYear 2025 ;
-                    mlit:ratioAge65Plus ?elderlyRatio2025 .
-                    
-      ?snapshot2030 mlit:populationYear 2030 ;
-                    mlit:ratioAge65Plus ?elderlyRatio2030 .
+      ?snapshot mlit:populationYear 2025 ;
+                mlit:totalPopulation ?population2025 ;
+                mlit:ageCategory65Plus ?elderly65Plus ;
+                mlit:ageCategory75plus ?elderly75Plus ;
+                mlit:ageCategory80plus ?elderly80Plus .
       
-      BIND(?elderlyRatio2030 - ?elderlyRatio2025 AS ?ratioIncrease)
+      BIND(?elderly65Plus / ?population2025 AS ?elderlyRatio)
       
-      FILTER(?population2020 > {{minPopulation}})
-      FILTER(?ratioIncrease > 0.05)
+      FILTER(?population2025 > {{minPopulation}})
+      FILTER(?elderlyRatio > 0.3)  # 30%以上の高齢化率
     }
-    ORDER BY DESC(?ratioIncrease)
+    ORDER BY DESC(?elderlyRatio)
     LIMIT {{limit}}`,
 
-  // 地図表示用データ
+  // 地図表示用データ (最適化版: 2025年データ + 土地利用情報)
   mapdata: `
     PREFIX geo: <http://www.opengis.net/ont/geosparql#>
     PREFIX mlit: <http://example.org/mlit/ontology#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     
-    SELECT ?meshId ?population2020 ?pop2025 ?elderlyRatio2025 
+    SELECT ?meshId ?population2025 ?elderly65Plus ?elderly75Plus
+           ?forestArea ?buildingLandArea ?waterBodyArea ?roadArea
            (REPLACE(STR(?wkt), "<[^>]+>\\\\s*", "") AS ?cleanWkt)
     WHERE {
       ?mesh rdf:type mlit:Mesh ;
             mlit:meshId ?meshId ;
-            mlit:totalPopulation2020 ?population2020 ;
-            mlit:hasPopulationData ?snapshot2025 ;
+            mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
       ?geometry geo:wktLiteral ?wkt .
       
-      ?snapshot2025 mlit:populationYear 2025 ;
-                    mlit:totalPopulation ?pop2025 ;
-                    mlit:ratioAge65Plus ?elderlyRatio2025 .
+      ?snapshot mlit:populationYear 2025 ;
+                mlit:totalPopulation ?population2025 ;
+                mlit:ageCategory65Plus ?elderly65Plus ;
+                mlit:ageCategory75plus ?elderly75Plus .
       
-      FILTER(?population2020 > {{minPopulation}})
+      # 土地利用情報（直接プロパティ、面積閾値によりOPTIONAL）
+      OPTIONAL { ?mesh mlit:forestArea ?forestArea . }
+      OPTIONAL { ?mesh mlit:buildingLandArea ?buildingLandArea . }
+      OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyArea . }
+      OPTIONAL { ?mesh mlit:roadArea ?roadArea . }
+      
+      FILTER(?population2025 > {{minPopulation}})
     }
     ORDER BY ?meshId
     LIMIT {{limit}}`,
 
-  // 時系列データ
-  timeseries: `
+  // 2025年データ詳細（最適化版: 年齢カテゴリ別詳細分析）
+  demographic: `
     PREFIX geo: <http://www.opengis.net/ont/geosparql#>
     PREFIX mlit: <http://example.org/mlit/ontology#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     
-    SELECT ?meshId ?year ?population ?elderlyRatio 
+    SELECT ?meshId ?population2025 ?age0_14 ?age15_64 ?age65Plus ?age75Plus ?age80Plus
+           ?elderlyRatio ?superElderlyRatio
            (REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\\\(\\\\(([0-9., ]+)\\\\)\\\\).*", "$1"), " ", ",") AS ?coordinates)
     WHERE {
       ?mesh rdf:type mlit:Mesh ;
             mlit:meshId ?meshId ;
+            mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
       ?geometry geo:wktLiteral ?wkt .
       
-      {
-        ?mesh mlit:totalPopulation2020 ?population .
-        BIND(2020 AS ?year)
-        BIND(0.0 AS ?elderlyRatio)
-      } UNION {
-        ?mesh mlit:hasPopulationData ?snapshot .
-        ?snapshot mlit:populationYear ?year ;
-                  mlit:totalPopulation ?population ;
-                  mlit:ratioAge65Plus ?elderlyRatio .
-        FILTER(?year IN (2025, 2030, 2035, 2040))
-      }
+      ?snapshot mlit:populationYear 2025 ;
+                mlit:totalPopulation ?population2025 ;
+                mlit:ageCategory0_14 ?age0_14 ;
+                mlit:ageCategory15_64 ?age15_64 ;
+                mlit:ageCategory65Plus ?age65Plus ;
+                mlit:ageCategory75plus ?age75Plus ;
+                mlit:ageCategory80plus ?age80Plus .
       
-      FILTER(?population > {{minPopulation}})
+      BIND(?age65Plus / ?population2025 AS ?elderlyRatio)
+      BIND(?age80Plus / ?population2025 AS ?superElderlyRatio)
+      
+      FILTER(?population2025 > {{minPopulation}})
     }
-    ORDER BY ?meshId ?year
+    ORDER BY DESC(?population2025)
     LIMIT {{limit}}`
 };
 
@@ -350,11 +360,11 @@ class QueryTool {
     console.log('');
     
     const descriptions = {
-      dashboard: 'Statistical summary for dashboard display',
-      ranking: 'Population density ranking with change rates',
-      aging: 'Aging analysis showing elderly ratio increases',
-      mapdata: 'Geographic data for map visualization',
-      timeseries: 'Time series data for trend analysis'
+      dashboard: 'Statistical summary for dashboard display (2025 data)',
+      ranking: 'Population density ranking with elderly data (2025)',
+      aging: 'Aging analysis with elderly categories (2025)',
+      mapdata: 'Geographic data with land use for maps (2025 + optimized land use)',
+      demographic: 'Detailed demographic breakdown by age categories (2025)'
     };
 
     for (const [name, description] of Object.entries(descriptions)) {

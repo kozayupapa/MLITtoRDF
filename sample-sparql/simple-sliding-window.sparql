@@ -8,8 +8,8 @@ PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 # 能登地方を3x3グリッドに分割して優先度分析
 
 SELECT ?windowId ?windowName ?meshCount 
-       ?totalPopulation ?elderlyPopulation ?buildingArea
-       ?priorityScore
+       ?totalPopulation ?elderlyPopulation ?superElderlyPopulation
+       ?buildingArea ?forestArea ?waterBodyArea ?priorityScore
 WHERE {
   # 3x3ウィンドウグリッドの定義
   VALUES (?windowId ?windowName ?centerLat ?centerLng) {
@@ -30,7 +30,10 @@ WHERE {
            (COUNT(DISTINCT ?meshId) AS ?meshCount)
            (SUM(?totalPop) AS ?totalPopulation) 
            (SUM(?elderlyPop) AS ?elderlyPopulation)
+           (SUM(?superElderlyPop) AS ?superElderlyPopulation)
            (SUM(?buildingAreaValue) AS ?buildingArea)
+           (SUM(?forestAreaValue) AS ?forestArea)
+           (SUM(?waterBodyValue) AS ?waterBodyArea)
     WHERE {
       VALUES (?windowId ?windowName ?centerLat ?centerLng) {
         ("W1" "北西エリア" 37.09 136.71)
@@ -55,19 +58,19 @@ WHERE {
       FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))
       FILTER(CONTAINS(STR(?wkt), "36.") || CONTAINS(STR(?wkt), "37."))
       
-      # 人口データ取得
+      # 2025年人口データ取得（最適化済み）
       OPTIONAL {
         ?mesh mlit:hasPopulationData ?popSnapshot .
-        ?popSnapshot mlit:totalPopulation ?totalPop ;
-                     mlit:ageCategory65Plus ?elderlyPop .
+        ?popSnapshot mlit:populationYear 2025 ;
+                     mlit:totalPopulation ?totalPop ;
+                     mlit:ageCategory65Plus ?elderlyPop ;
+                     mlit:ageCategory75plus ?superElderlyPop .
       }
       
-      # 建物用地データ取得
-      OPTIONAL {
-        ?mesh mlit:hasLandUseData ?buildingLand .
-        ?buildingLand mlit:landUseCategory "建物用地" ;
-                      mlit:landUseArea ?buildingAreaValue .
-      }
+      # 土地利用データ取得（直接プロパティ）
+      OPTIONAL { ?mesh mlit:buildingLandArea ?buildingAreaValue . }
+      OPTIONAL { ?mesh mlit:forestArea ?forestAreaValue . }
+      OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyValue . }
       
       # データが存在するメッシュのみ
       FILTER(BOUND(?totalPop) || BOUND(?buildingAreaValue))
@@ -75,13 +78,18 @@ WHERE {
     GROUP BY ?windowId ?windowName
   }
   
-  # ウィンドウ優先度スコア計算
+  # ウィンドウ優先度スコア計算（最適化版）
   BIND(
-    # 人口密度スコア（高齢者重み付け）60%
-    (COALESCE(?totalPopulation, 0) * 1.0 + COALESCE(?elderlyPopulation, 0) * 2.0) * 0.6 +
+    # 人口密度スコア（高齢者重み付け: 65+は2倍、75+は3倍）50%
+    (COALESCE(?totalPopulation, 0) * 1.0 + 
+     COALESCE(?elderlyPopulation, 0) * 2.0 +
+     COALESCE(?superElderlyPopulation, 0) * 3.0) * 0.5 +
     
-    # 建物密度スコア 30%
+    # 建物密度スコア（被害想定）30%
     (COALESCE(?buildingArea, 0) / 1000000) * 0.3 +
+    
+    # 土砂災害リスクスコア（森林面積）10%
+    (COALESCE(?forestArea, 0) / 1000000) * 0.1 +
     
     # エリア充実度スコア（メッシュ数） 10%
     (?meshCount * 50) * 0.1
