@@ -49,12 +49,26 @@ export interface MLITPredicates {
   readonly ratioAge65Plus: string;
   readonly ratioAge75plus: string;
   readonly ratioAge80plus: string;
-  // Land use predicates
+  // Land use predicates (legacy - for backward compatibility)
   readonly hasLandUseData: string;
   readonly landUseCategory: string;
   readonly landUseCode: string;
   readonly landUseArea: string;
   readonly landUsePercentage: string;
+  // Direct land use area properties (optimized)
+  readonly riceFieldArea: string;
+  readonly otherAgriculturalArea: string;
+  readonly forestArea: string;
+  readonly wastelandArea: string;
+  readonly buildingLandArea: string;
+  readonly roadArea: string;
+  readonly railwayArea: string;
+  readonly otherLandArea: string;
+  readonly waterBodyArea: string;
+  readonly beachArea: string;
+  readonly seaArea: string;
+  readonly golfCourseArea: string;
+  readonly outOfRangeArea: string;
   // Disaster predicates
   readonly hasDisasterData: string;
   readonly disasterType: string;
@@ -121,12 +135,26 @@ export const MLIT_PREDICATES: MLITPredicates = {
   ratioAge65Plus: `${RDF_PREFIXES.mlit}ratioAge65Plus`,
   ratioAge75plus: `${RDF_PREFIXES.mlit}ratioAge75plus`,
   ratioAge80plus: `${RDF_PREFIXES.mlit}ratioAge80plus`,
-  // Land use predicates
+  // Land use predicates (legacy - for backward compatibility)
   hasLandUseData: `${RDF_PREFIXES.mlit}hasLandUseData`,
   landUseCategory: `${RDF_PREFIXES.mlit}landUseCategory`,
   landUseCode: `${RDF_PREFIXES.mlit}landUseCode`,
   landUseArea: `${RDF_PREFIXES.mlit}landUseArea`,
   landUsePercentage: `${RDF_PREFIXES.mlit}landUsePercentage`,
+  // Direct land use area properties (optimized)
+  riceFieldArea: `${RDF_PREFIXES.mlit}riceFieldArea`,
+  otherAgriculturalArea: `${RDF_PREFIXES.mlit}otherAgriculturalArea`,
+  forestArea: `${RDF_PREFIXES.mlit}forestArea`,
+  wastelandArea: `${RDF_PREFIXES.mlit}wastelandArea`,
+  buildingLandArea: `${RDF_PREFIXES.mlit}buildingLandArea`,
+  roadArea: `${RDF_PREFIXES.mlit}roadArea`,
+  railwayArea: `${RDF_PREFIXES.mlit}railwayArea`,
+  otherLandArea: `${RDF_PREFIXES.mlit}otherLandArea`,
+  waterBodyArea: `${RDF_PREFIXES.mlit}waterBodyArea`,
+  beachArea: `${RDF_PREFIXES.mlit}beachArea`,
+  seaArea: `${RDF_PREFIXES.mlit}seaArea`,
+  golfCourseArea: `${RDF_PREFIXES.mlit}golfCourseArea`,
+  outOfRangeArea: `${RDF_PREFIXES.mlit}outOfRangeArea`,
   // Disaster predicates
   hasDisasterData: `${RDF_PREFIXES.mlit}hasDisasterData`,
   disasterType: `${RDF_PREFIXES.mlit}disasterType`,
