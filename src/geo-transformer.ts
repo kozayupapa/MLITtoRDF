@@ -12,7 +12,6 @@ import {
   RDF_PREFIXES,
   MLIT_PREDICATES,
   MLIT_CLASSES,
-  WGS84_CRS_URI,
   generateMeshIRI,
   generateGeometryIRI,
   generatePopulationSnapshotIRI,
@@ -349,7 +348,10 @@ export class GeoSPARQLTransformer {
     // Direct property mapping (no individual LandUseData IRIs)
     const landUseDirectMappings = [
       { property: '田', predicate: MLIT_PREDICATES.riceFieldArea },
-      { property: 'その他の農用地', predicate: MLIT_PREDICATES.otherAgriculturalArea },
+      {
+        property: 'その他の農用地',
+        predicate: MLIT_PREDICATES.otherAgriculturalArea,
+      },
       { property: '森林', predicate: MLIT_PREDICATES.forestArea },
       { property: '荒地', predicate: MLIT_PREDICATES.wastelandArea },
       { property: '建物用地', predicate: MLIT_PREDICATES.buildingLandArea },
@@ -366,7 +368,7 @@ export class GeoSPARQLTransformer {
     // Process each land use category with area threshold filtering
     for (const mapping of landUseDirectMappings) {
       const area = properties[mapping.property];
-      
+
       // Apply area threshold filter: only include areas >= 5000 sq meters
       if (area !== undefined && area !== null && area >= AREA_THRESHOLD) {
         // Add direct property to mesh (1 triple per category instead of 5)
@@ -408,10 +410,14 @@ export class GeoSPARQLTransformer {
     if (availableYears.has('2025')) {
       return ['2025'];
     }
-    
+
     // Log if 2025 data is not found but other years exist
     if (availableYears.size > 0) {
-      this.logger?.debug(`2025 data not found, available years: ${Array.from(availableYears).join(', ')}`);
+      this.logger?.debug(
+        `2025 data not found, available years: ${Array.from(
+          availableYears
+        ).join(', ')}`
+      );
     }
 
     return [];
