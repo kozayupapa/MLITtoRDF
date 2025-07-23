@@ -18,7 +18,7 @@ WHERE {
         mlit:administrativeCode ?adminCode ;
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
 }
 ORDER BY DESC(?population2020)
 LIMIT 10
@@ -33,7 +33,7 @@ WHERE {
         mlit:meshId ?meshId ;
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # 実際のデータ範囲に基づくBBOX（石川県南部）
   FILTER(CONTAINS(STR(?wkt), "136.35") || CONTAINS(STR(?wkt), "136.36") || CONTAINS(STR(?wkt), "136.37"))
@@ -51,7 +51,7 @@ WHERE {
         mlit:meshId ?meshId ;
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # 1km²メッシュなので人口=密度
   BIND(?population2020 AS ?density)
@@ -73,7 +73,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2025 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([^)]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
   
   ?snapshot2025 mlit:populationYear 2025 ;
@@ -125,7 +125,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2030 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([^)]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
   
   ?snapshot2030 mlit:populationYear 2030 ;
@@ -146,7 +146,7 @@ WHERE {
         mlit:meshId ?meshId ;
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # メッシュ54362268（最初のメッシュ）周辺
   # 簡易的な距離フィルタ：座標の差で近似

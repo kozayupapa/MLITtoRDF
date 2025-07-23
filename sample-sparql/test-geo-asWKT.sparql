@@ -1,0 +1,36 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# ===============================================================
+# geo:asWKT 標準構造テストクエリ
+# ===============================================================
+# 新しいデータ構造が正しく動作するかテスト
+
+# テスト1: データ構造確認
+SELECT ?mesh ?meshId ?geometry ?wkt 
+       (SUBSTR(STR(?wkt), 1, 100) AS ?wktPreview)
+       (DATATYPE(?wkt) AS ?wktDatatype)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  # 標準的な geo:asWKT プロパティを使用
+  ?geometry geo:asWKT ?wkt .
+  
+  # 石川県付近のメッシュ（54で始まるID）
+  FILTER(REGEX(?meshId, "^54"))
+}
+ORDER BY ?meshId
+LIMIT 5
+
+# 期待される結果:
+# 1. mesh: メッシュのIRI
+# 2. meshId: メッシュID（54で始まる）
+# 3. geometry: ジオメトリのIRI  
+# 4. wkt: WKT文字列（POLYGON形式）
+# 5. wktDatatype: geo:wktLiteral データタイプ
+
+# このクエリが正常に結果を返せば、geo:asWKT構造への移行が成功

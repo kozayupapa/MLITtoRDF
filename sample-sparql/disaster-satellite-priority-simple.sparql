@@ -15,7 +15,7 @@ WHERE {
         geo:hasGeometry ?geom .
   
   # WKT座標から緯度経度を抽出（簡易的な文字列処理）
-  ?geom geo:wktLiteral ?wkt .
+  ?geom geo:asWKT ?wkt .
   
   # 座標範囲フィルタ（能登地方周辺）
   FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))

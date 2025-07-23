@@ -1,0 +1,144 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ===============================================================
+# 汎用的な地理空間クエリテンプレート集
+# ===============================================================
+# RDF4J GeoSPARQL関数を活用した様々な空間フィルタ
+
+# ===============================================================
+# 1. 交差判定クエリ（sfIntersects）- BBOXと交差するメッシュ
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # 指定範囲と交差するメッシュを取得
+#   FILTER(geof:sfIntersects(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+
+# ===============================================================
+# 2. 包含判定クエリ（sfWithin）- BBOX内に完全に含まれるメッシュ
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # 指定範囲内に完全に含まれるメッシュのみ取得
+#   FILTER(geof:sfWithin(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+
+# ===============================================================
+# 3. 距離ベースクエリ（geof:distance）- 指定点からの距離フィルタ
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt ?distanceKm
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   BIND(geof:distance(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POINT(136.7 36.8)"^^geo:wktLiteral, <http://www.opengis.net/def/uom/OGC/1.0/metre>) AS ?distanceMeters)
+#   BIND(?distanceMeters / 1000 AS ?distanceKm)
+#   
+#   # 指定点から10km以内のメッシュのみ
+#   FILTER(?distanceKm <= 10)
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?distanceKm
+
+# ===============================================================
+# 4. 重複判定クエリ（sfOverlaps）- BBOXと部分重複するメッシュ
+# ===============================================================
+SELECT ?mesh ?meshId ?population2025 ?elderly65Plus ?elderly75Plus
+       ?buildingArea ?forestArea ?waterBodyArea ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:asWKT ?wkt .
+  
+  # 指定範囲と部分的に重複するメッシュを取得
+  FILTER(geof:sfOverlaps(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral) || 
+         geof:sfIntersects(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  
+  # 2025年人口データ（最適化済み）
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?population2025 ;
+                 mlit:ageCategory65Plus ?elderly65Plus ;
+                 mlit:ageCategory75plus ?elderly75Plus .
+  }
+  
+  # 土地利用データ（直接プロパティ）
+  OPTIONAL { ?mesh mlit:buildingLandArea ?buildingArea . }
+  OPTIONAL { ?mesh mlit:forestArea ?forestArea . }
+  OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyArea . }
+  
+  # データの存在チェック
+  FILTER(BOUND(?population2025) || BOUND(?buildingArea) || BOUND(?forestArea) || BOUND(?waterBodyArea))
+}
+ORDER BY ?meshId
+LIMIT 200
+
+# ===============================================================
+# 5. 境界判定クエリ（sfTouches）- BBOXと境界を接するメッシュ
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # 指定範囲の境界と接するメッシュを取得
+#   FILTER(geof:sfTouches(?wkt, "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+
+# 使用方法:
+# 1. 必要なクエリパターンのコメントを外す
+# 2. BBOX座標を対象地域に変更
+# 3. 距離クエリの場合は中心点座標を変更
+# 4. フィルタ条件（距離、面積など）を調整

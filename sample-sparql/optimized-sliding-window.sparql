@@ -56,7 +56,7 @@ WHERE {
             mlit:meshId ?meshId ;
             geo:hasGeometry ?geom .
       
-      ?geom geo:wktLiteral ?wkt .
+      ?geom geo:asWKT ?wkt .
       
       # 能登地方の座標範囲内のメッシュのみ対象
       FILTER(CONTAINS(STR(?wkt), "136.") || CONTAINS(STR(?wkt), "137."))

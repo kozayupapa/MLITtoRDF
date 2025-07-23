@@ -17,7 +17,7 @@ WHERE {
         mlit:meshId ?meshId ;
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # 座標フィルタ（簡易版 - 文字列マッチング）
   FILTER(
@@ -41,7 +41,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2030 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot2025 mlit:populationYear 2025 ;
                 mlit:totalPopulation ?pop2025 ;
@@ -94,7 +94,7 @@ WHERE {
             mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
-      ?geometry geo:wktLiteral ?wkt .
+      ?geometry geo:asWKT ?wkt .
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?pop2025 .
       
@@ -122,7 +122,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2030 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot2025 mlit:populationYear 2025 ;
                 mlit:ratioAge65Plus ?elderlyRatio2025 .
@@ -151,7 +151,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2040 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot2030 mlit:populationYear 2030 ;
                 mlit:totalPopulation ?pop2030 .
@@ -186,7 +186,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot mlit:populationYear 2030 ;
             mlit:totalPopulation ?totalPop ;
@@ -220,7 +220,7 @@ WHERE {
         mlit:meshId ?meshId ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   BIND(REPLACE(REPLACE(STR(?wkt), ".*POLYGON \\(\\(([0-9., ]+)\\)\\).*", "$1"), " ", ",") AS ?coordinates)
   
   {
@@ -255,7 +255,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot mlit:populationYear 2025 ;
             mlit:totalPopulation ?pop2025 ;
@@ -279,7 +279,7 @@ WHERE {
         mlit:hasPopulationData ?snapshot2030 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?snapshot2025 mlit:populationYear 2025 ;
                 mlit:totalPopulation ?pop2025 ;

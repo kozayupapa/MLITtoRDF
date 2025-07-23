@@ -21,7 +21,7 @@ WHERE {
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # 石川県BBOXとの交差判定
   FILTER(geo:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
@@ -40,7 +40,7 @@ WHERE {
         mlit:hasPopulationData ?popSnapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?popSnapshot mlit:populationYear 2025 ;
                mlit:totalPopulation ?totalPop2025 ;
@@ -64,7 +64,7 @@ WHERE {
         mlit:totalPopulation2020 ?population2020 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   # 1km²メッシュなので人口がそのまま密度
   BIND(?population2020 AS ?density)
@@ -87,7 +87,7 @@ WHERE {
         mlit:hasPopulationData ?popSnapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?popSnapshot mlit:populationYear 2030 ;
                mlit:totalPopulation ?totalPop ;
@@ -112,7 +112,7 @@ WHERE {
         mlit:hasPopulationData ?popSnapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?popSnapshot mlit:populationYear ?year ;
                mlit:totalPopulation ?totalPop ;
@@ -140,7 +140,7 @@ WHERE {
         mlit:hasPopulationData ?popSnapshot2030 ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?popSnapshot2030 mlit:populationYear 2030 ;
                    mlit:totalPopulation ?pop2030 .
@@ -165,7 +165,7 @@ WHERE {
         mlit:meshId ?meshId ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   OPTIONAL {
     ?mesh mlit:totalPopulation2020 ?pop2020 .
@@ -211,7 +211,7 @@ WHERE {
         mlit:hasPopulationData ?popSnapshot ;
         geo:hasGeometry ?geometry .
   
-  ?geometry geo:wktLiteral ?wkt .
+  ?geometry geo:asWKT ?wkt .
   
   ?popSnapshot mlit:populationYear ?year ;
                mlit:totalPopulation ?totalPop ;

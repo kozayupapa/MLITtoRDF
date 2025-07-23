@@ -1,0 +1,48 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# ===============================================================
+# デバッグステップ4: GeoSPARQL拡張サポート確認
+# ===============================================================
+
+SELECT ?testType ?result ?message
+WHERE {
+  # テスト1: 基本的なWKT文字列の作成
+  BIND("Test1: Basic WKT" AS ?testType)
+  BIND("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"^^geo:wktLiteral AS ?simpleWKT)
+  BIND(IF(BOUND(?simpleWKT), "SUCCESS", "FAILED") AS ?result)
+  BIND("Basic WKT literal creation" AS ?message)
+}
+UNION
+{
+  # テスト2: 簡単な交差判定（固定値）
+  BIND("Test2: Simple Intersection" AS ?testType)
+  BIND(
+    COALESCE(
+      geof:sfIntersects(
+        "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))"^^geo:wktLiteral,
+        "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))"^^geo:wktLiteral
+      ),
+      "FUNCTION_ERROR"
+    ) AS ?result
+  )
+  BIND("Fixed WKT geometries intersection test" AS ?message)
+}
+UNION
+{
+  # テスト3: CRS付きWKTの処理
+  BIND("Test3: CRS WKT" AS ?testType)
+  BIND(
+    COALESCE(
+      geof:sfIntersects(
+        "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136 36, 137 36, 137 37, 136 37, 136 36))"^^geo:wktLiteral,
+        "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.5 36.5, 137.5 36.5, 137.5 37.5, 136.5 37.5, 136.5 36.5))"^^geo:wktLiteral
+      ),
+      "CRS_ERROR"
+    ) AS ?result
+  )
+  BIND("CRS-enabled WKT geometries test" AS ?message)
+}
+ORDER BY ?testType

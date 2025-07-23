@@ -1,0 +1,38 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# ===============================================================
+# RDF4J互換 石川県BBOX空間フィルタクエリ
+# ===============================================================
+# CRS無しWKTでGeoSPARQL関数を使用
+
+SELECT ?meshId ?totalPopulation ?elderlyPopulation ?buildingArea
+WHERE {
+  # メッシュデータの基本情報
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  # WKTジオメトリの取得
+  ?geometry geo:asWKT ?wkt .
+  
+  # 石川県BBOX内のメッシュを空間フィルタ（CRS無し）
+  FILTER(geof:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  
+  # 2025年人口データ
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?totalPopulation ;
+                 mlit:ageCategory65Plus ?elderlyPopulation .
+  }
+  
+  # 建物用地面積
+  OPTIONAL {
+    ?mesh mlit:buildingLandArea ?buildingArea .
+  }
+}
+ORDER BY DESC(?totalPopulation)
+LIMIT 20

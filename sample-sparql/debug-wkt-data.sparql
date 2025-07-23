@@ -1,0 +1,31 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# ===============================================================
+# WKTデータ構造デバッグクエリ
+# ===============================================================
+# 実際に格納されているWKTデータの形式を確認
+
+SELECT ?mesh ?meshId ?geometry ?wkt 
+       (SUBSTR(STR(?wkt), 1, 100) AS ?wktPreview)
+       (DATATYPE(?wkt) AS ?wktDatatype)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:asWKT ?wkt .
+  
+  # メッシュIDの範囲を絞って石川県付近のデータを取得
+  # 石川県のメッシュIDは54で始まることが多い
+  FILTER(REGEX(?meshId, "^54"))
+}
+ORDER BY ?meshId
+LIMIT 10
+
+# このクエリで確認できること:
+# 1. WKTの実際の内容とフォーマット
+# 2. データタイプ（geo:wktLiteral かどうか）
+# 3. CRS情報が含まれているかどうか
+# 4. 座標の形式（経度緯度の順序など）

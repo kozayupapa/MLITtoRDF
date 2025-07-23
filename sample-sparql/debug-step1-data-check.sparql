@@ -1,0 +1,33 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+# ===============================================================
+# デバッグステップ1: 実際のデータ構造確認
+# ===============================================================
+
+SELECT ?mesh ?meshId ?geometry ?wkt 
+       (SUBSTR(STR(?wkt), 1, 150) AS ?wktPreview)
+       (DATATYPE(?wkt) AS ?wktDatatype)
+       (STRLEN(STR(?wkt)) AS ?wktLength)
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  # geo:asWKT プロパティでWKTデータを取得
+  ?geometry geo:asWKT ?wkt .
+  
+  # 石川県付近のメッシュ（54で始まるID）
+  FILTER(REGEX(?meshId, "^54"))
+}
+ORDER BY ?meshId
+LIMIT 10
+
+# このクエリで確認する内容:
+# 1. mesh: メッシュのIRI構造
+# 2. meshId: メッシュIDの形式
+# 3. geometry: ジオメトリオブジェクトの存在
+# 4. wkt: WKT文字列の実際の内容
+# 5. wktDatatype: データタイプが geo:wktLiteral かどうか
+# 6. wktLength: WKT文字列の長さ（空でないか確認）

@@ -22,7 +22,7 @@ WHERE {
         geo:hasGeometry ?meshGeom .
   
   # WKT座標文字列を取得
-  ?meshGeom geo:wktLiteral ?wkt .
+  ?meshGeom geo:asWKT ?wkt .
   BIND(STR(?wkt) AS ?coordinates)
   
   # 能登地方の範囲フィルタ（簡易的な文字列マッチング）

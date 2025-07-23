@@ -1,0 +1,113 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ===============================================================
+# BBOX クエリ代替手法集（geo:wktLiteral プロパティ対応）
+# ===============================================================
+
+# ===============================================================
+# 代替手法1: CRS指定なしの標準的なWKTリテラル
+# ===============================================================
+SELECT ?mesh ?meshId ?population2025 ?wkt
+WHERE {
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  ?geometry geo:asWKT ?wkt .
+  
+  # CRS指定なしでテスト
+  FILTER(geof:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?population2025 .
+  }
+  
+  FILTER(REGEX(?meshId, "^54"))  # 石川県付近のメッシュ
+}
+ORDER BY ?meshId
+LIMIT 20
+
+# ===============================================================
+# 代替手法2: 文字列として扱い、手動パースして座標範囲チェック
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # WKT文字列から座標を抽出して範囲チェック
+#   FILTER(
+#     REGEX(STR(?wkt), "POLYGON\\(\\([^)]*136\\.[0-9][^)]*36\\.[0-9]") ||
+#     REGEX(STR(?wkt), "POLYGON\\(\\([^)]*137\\.[0-9][^)]*37\\.[0-9]")
+#   )
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+# LIMIT 20
+
+# ===============================================================
+# 代替手法3: RDF4Jが geo:asWKT を期待する場合の変換
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   # geo:asWKT の代わりに geo:wktLiteral を使用
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # geometryオブジェクト自体を空間関数に渡す試行
+#   FILTER(geof:sfIntersects(?geometry, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+# LIMIT 20
+
+# ===============================================================
+# 代替手法4: sfWithin（完全包含）での試行
+# ===============================================================
+# SELECT ?mesh ?meshId ?population2025 ?wkt
+# WHERE {
+#   ?mesh rdf:type mlit:Mesh ;
+#         mlit:meshId ?meshId ;
+#         geo:hasGeometry ?geometry .
+#   
+#   ?geometry geo:asWKT ?wkt .
+#   
+#   # sfIntersects の代わりに sfWithin を試行
+#   FILTER(geof:sfWithin(?wkt, "POLYGON((135.5 35.8, 137.8 35.8, 137.8 37.9, 135.5 37.9, 135.5 35.8))"^^geo:wktLiteral))
+#   
+#   OPTIONAL {
+#     ?mesh mlit:hasPopulationData ?popSnapshot .
+#     ?popSnapshot mlit:populationYear 2025 ;
+#                  mlit:totalPopulation ?population2025 .
+#   }
+# }
+# ORDER BY ?meshId
+# LIMIT 20
+
+# 使用方法:
+# 1. 代替手法1から順番に試行
+# 2. 結果が返される手法を特定
+# 3. 必要に応じて他の代替手法のコメントを外して試行

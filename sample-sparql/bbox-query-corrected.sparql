@@ -1,0 +1,53 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ===============================================================
+# 修正版BBOX クエリ - geo:wktLiteral プロパティ対応
+# ===============================================================
+# 現在のデータ構造（geo:wktLiteral プロパティ）に適合
+
+SELECT ?mesh ?meshId ?adminCode ?population2025 ?elderly65Plus ?elderly75Plus
+       ?buildingArea ?forestArea ?waterBodyArea ?wkt
+WHERE {
+  # メッシュの基本情報
+  ?mesh rdf:type mlit:Mesh ;
+        mlit:meshId ?meshId ;
+        geo:hasGeometry ?geometry .
+  
+  # 現在のデータ構造: geo:wktLiteral プロパティを使用
+  ?geometry geo:asWKT ?wkt .
+  
+  # 修正版1: geo:wktLiteral プロパティの値を直接使用
+  FILTER(geof:sfIntersects(?wkt, "POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral))
+  
+  # 行政コード
+  OPTIONAL { ?mesh mlit:administrativeCode ?adminCode . }
+  
+  # 2025年人口データ（最適化済み）
+  OPTIONAL {
+    ?mesh mlit:hasPopulationData ?popSnapshot .
+    ?popSnapshot mlit:populationYear 2025 ;
+                 mlit:totalPopulation ?population2025 ;
+                 mlit:ageCategory65Plus ?elderly65Plus ;
+                 mlit:ageCategory75plus ?elderly75Plus .
+  }
+  
+  # 土地利用データ（直接プロパティ）
+  OPTIONAL { ?mesh mlit:buildingLandArea ?buildingArea . }
+  OPTIONAL { ?mesh mlit:forestArea ?forestArea . }
+  OPTIONAL { ?mesh mlit:waterBodyArea ?waterBodyArea . }
+  
+  # データの存在チェック
+  FILTER(BOUND(?population2025) || BOUND(?buildingArea) || BOUND(?forestArea) || BOUND(?waterBodyArea))
+}
+ORDER BY ?meshId
+LIMIT 100
+
+# 修正ポイント:
+# 1. CRS指定を削除（データにすでに含まれている可能性）
+# 2. 両方の引数でシンプルなWKTリテラルを使用
+# 3. geo:wktLiteral プロパティの値を直接参照

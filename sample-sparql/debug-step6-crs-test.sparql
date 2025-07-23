@@ -1,0 +1,30 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+
+# ===============================================================
+# デバッグステップ6: CRS仕様付きWKTテスト
+# ===============================================================
+
+SELECT ?testCase ?result
+WHERE {
+  # テスト1: CRS無しWKT（標準）
+  BIND("NoCRS" AS ?testCase)
+  BIND(
+    geof:sfIntersects(
+      "POLYGON((136 36, 137 36, 137 37, 136 37, 136 36))"^^geo:wktLiteral,
+      "POLYGON((136.5 36.5, 137.5 36.5, 137.5 37.5, 136.5 37.5, 136.5 36.5))"^^geo:wktLiteral
+    ) AS ?result
+  )
+}
+UNION
+{
+  # テスト2: CRS付きWKT（問題のある形式かテスト）
+  BIND("WithCRS" AS ?testCase)
+  BIND(
+    geof:sfIntersects(
+      "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136 36, 137 36, 137 37, 136 37, 136 36))"^^geo:wktLiteral,
+      "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((136.5 36.5, 137.5 36.5, 137.5 37.5, 136.5 37.5, 136.5 36.5))"^^geo:wktLiteral
+    ) AS ?result
+  )
+}
+ORDER BY ?testCase

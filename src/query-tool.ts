@@ -82,7 +82,7 @@ const QUERY_TEMPLATES = {
             mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
-      ?geometry geo:wktLiteral ?wkt .
+      ?geometry geo:asWKT ?wkt .
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?pop2025 ;
                 mlit:ageCategory65Plus ?elderly65Plus ;
@@ -109,7 +109,7 @@ const QUERY_TEMPLATES = {
             mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
-      ?geometry geo:wktLiteral ?wkt .
+      ?geometry geo:asWKT ?wkt .
       
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?population2025 ;
@@ -140,7 +140,7 @@ const QUERY_TEMPLATES = {
             mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
-      ?geometry geo:wktLiteral ?wkt .
+      ?geometry geo:asWKT ?wkt .
       
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?population2025 ;
@@ -173,7 +173,7 @@ const QUERY_TEMPLATES = {
             mlit:hasPopulationData ?snapshot ;
             geo:hasGeometry ?geometry .
       
-      ?geometry geo:wktLiteral ?wkt .
+      ?geometry geo:asWKT ?wkt .
       
       ?snapshot mlit:populationYear 2025 ;
                 mlit:totalPopulation ?population2025 ;

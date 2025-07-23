@@ -112,12 +112,12 @@ export class GeoSPARQLTransformer {
       )
     );
 
-    // Transform and add geometry
+    // Transform and add geometry (using standard geo:asWKT property)
     const wktGeometry = this.transformGeometry(feature.geometry);
     triples.push(
       this.createTriple(
         geometryIRI,
-        `${RDF_PREFIXES.geo}wktLiteral`,
+        `${RDF_PREFIXES.geo}asWKT`,
         this.createWKTLiteral(wktGeometry)
       )
     );
@@ -437,10 +437,10 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Create a WKT literal with CRS
+   * Create a WKT literal (CRS-less for RDF4J GeoSPARQL compatibility)
    */
   private createWKTLiteral(wkt: string): string {
-    return `"${WGS84_CRS_URI} ${wkt}"^^<${RDF_PREFIXES.geo}wktLiteral>`;
+    return `"${wkt}"^^<${RDF_PREFIXES.geo}wktLiteral>`;
   }
 
   /**
