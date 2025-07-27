@@ -30,6 +30,8 @@ interface CLIOptions {
   includePopulationSnapshots: boolean;
   dataType: 'population-geojson' | 'landuse-geojson' | 'auto';
   serverType: 'rdf4j' | 'virtuoso';
+  username?: string;
+  password?: string;
 }
 
 /**
@@ -219,6 +221,8 @@ class MLITGeoJSONToRDF4J {
       timeout: 60000, // 60 seconds
       maxRetries: 3,
       serverType: this.options.serverType,
+      username: this.options.username,
+      password: this.options.password,
     });
   }
 
@@ -611,6 +615,14 @@ async function main(): Promise<void> {
       '--serverType <type>',
       'RDF server type: rdf4j or virtuoso',
       'rdf4j'
+    )
+    .option(
+      '--username <username>',
+      'Username for server authentication (required for Virtuoso)'
+    )
+    .option(
+      '--password <password>',
+      'Password for server authentication (required for Virtuoso)'
     );
 
   program.parse();
@@ -662,6 +674,16 @@ async function main(): Promise<void> {
       }. Must be one of: ${validServerTypes.join(', ')}`
     );
     process.exit(1);
+  }
+
+  // Validate authentication for Virtuoso
+  if (options.serverType === 'virtuoso') {
+    if (!options.username || !options.password) {
+      console.error(
+        'Username and password are required when using Virtuoso server type'
+      );
+      process.exit(1);
+    }
   }
 
   // Execute the main application

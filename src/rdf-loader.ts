@@ -9,6 +9,7 @@ import { Logger } from 'winston';
 import { RDFTriple } from './geo-transformer';
 import { generateSparqlPrefixes } from './ontology-config';
 import fetch from 'node-fetch';
+import * as crypto from 'crypto';
 
 export interface LoaderOptions {
   rdf4jEndpoint: string;
@@ -18,6 +19,8 @@ export interface LoaderOptions {
   timeout?: number;
   maxRetries?: number;
   serverType?: 'rdf4j' | 'virtuoso';
+  username?: string;
+  password?: string;
 }
 
 export interface TripleBatchInfo {
@@ -56,7 +59,7 @@ export class RDF4JBulkLoader {
   constructor(options: LoaderOptions) {
     this.options = options;
     this.logger = options.logger || (console as any);
-    
+
     // Default to RDF4J server type if not specified
     if (!this.options.serverType) {
       this.options.serverType = 'rdf4j';
@@ -74,7 +77,9 @@ export class RDF4JBulkLoader {
     });
 
     this.logger.info(
-      `Initialized ${this.options.serverType.toUpperCase()} loader for endpoint: ${this.endpointUrl}`
+      `Initialized ${this.options.serverType.toUpperCase()} loader for endpoint: ${
+        this.endpointUrl
+      }`
     );
     this.logger.info(`Batch size: ${options.batchSize}`);
   }
@@ -83,7 +88,7 @@ export class RDF4JBulkLoader {
    * Load RDF triples in batches to RDF4J server with feature mapping
    */
   public async loadTriplesWithFeatureInfo(
-    triples: RDFTriple[], 
+    triples: RDFTriple[],
     triplesPerFeature: number,
     totalFeatures: number
   ): Promise<LoadResult> {
@@ -105,12 +110,19 @@ export class RDF4JBulkLoader {
 
       // Calculate approximate feature range for this batch
       const startTripleIndex = i * batchSize;
-      const endTripleIndex = Math.min(startTripleIndex + batch.length - 1, triples.length - 1);
-      const startFeatureIndex = Math.floor(startTripleIndex / triplesPerFeature);
+      const endTripleIndex = Math.min(
+        startTripleIndex + batch.length - 1,
+        triples.length - 1
+      );
+      const startFeatureIndex = Math.floor(
+        startTripleIndex / triplesPerFeature
+      );
       const endFeatureIndex = Math.floor(endTripleIndex / triplesPerFeature);
 
       this.logger.info(
-        `Processing batch ${i + 1}/${batches.length} (${batch.length} triples, features ~${startFeatureIndex}-${endFeatureIndex})`
+        `Processing batch ${i + 1}/${batches.length} (${
+          batch.length
+        } triples, features ~${startFeatureIndex}-${endFeatureIndex})`
       );
 
       try {
@@ -131,7 +143,9 @@ export class RDF4JBulkLoader {
           await this.delay(100);
         }
       } catch (error) {
-        const errorMessage = `Batch ${i + 1} failed after all retries: ${error}`;
+        const errorMessage = `Batch ${
+          i + 1
+        } failed after all retries: ${error}`;
         this.logger.error(errorMessage);
 
         // Calculate skipFeatures for manual restart based on feature count
@@ -141,8 +155,14 @@ export class RDF4JBulkLoader {
         this.logger.info('='.repeat(60));
         this.logger.info(`To resume from this failed batch, restart with:`);
         this.logger.info(`  --skipFeatures ${skipFeatures}`);
-        this.logger.info(`This will skip the first ${skipFeatures} features and restart processing`);
-        this.logger.info(`Failed batch ${i + 1} covers features ~${startFeatureIndex}-${endFeatureIndex}`);
+        this.logger.info(
+          `This will skip the first ${skipFeatures} features and restart processing`
+        );
+        this.logger.info(
+          `Failed batch ${
+            i + 1
+          } covers features ~${startFeatureIndex}-${endFeatureIndex}`
+        );
         this.logger.info('='.repeat(60));
 
         errors.push(errorMessage);
@@ -187,7 +207,7 @@ export class RDF4JBulkLoader {
     );
     if (errors.length > 0) {
       this.logger.warn(`${errors.length} batches failed during load`);
-      
+
       // Show restart instructions for failed batches
       const failedBatches = batchResults.filter((r) => !r.success);
       if (failedBatches.length > 0) {
@@ -197,7 +217,9 @@ export class RDF4JBulkLoader {
         failedBatches.forEach((batch) => {
           const startTripleIndex = batch.batchIndex * batchSize;
           const skipFeatures = Math.floor(startTripleIndex / triplesPerFeature);
-          this.logger.info(`Batch ${batch.batchIndex + 1}: --skipFeatures ${skipFeatures}`);
+          this.logger.info(
+            `Batch ${batch.batchIndex + 1}: --skipFeatures ${skipFeatures}`
+          );
         });
         this.logger.info('='.repeat(50));
       }
@@ -248,7 +270,9 @@ export class RDF4JBulkLoader {
           await this.delay(100);
         }
       } catch (error) {
-        const errorMessage = `Batch ${i + 1} failed after all retries: ${error}`;
+        const errorMessage = `Batch ${
+          i + 1
+        } failed after all retries: ${error}`;
         this.logger.error(errorMessage);
 
         // Calculate skipFeatures for manual restart
@@ -258,7 +282,11 @@ export class RDF4JBulkLoader {
         this.logger.info('='.repeat(60));
         this.logger.info(`To resume from this failed batch, restart with:`);
         this.logger.info(`  --skipFeatures ${skipFeatures}`);
-        this.logger.info(`This will skip the first ${skipFeatures} features and restart from batch ${i + 1}`);
+        this.logger.info(
+          `This will skip the first ${skipFeatures} features and restart from batch ${
+            i + 1
+          }`
+        );
         this.logger.info('='.repeat(60));
 
         errors.push(errorMessage);
@@ -303,7 +331,7 @@ export class RDF4JBulkLoader {
     );
     if (errors.length > 0) {
       this.logger.warn(`${errors.length} batches failed during load`);
-      
+
       // Show restart instructions for failed batches
       const failedBatches = batchResults.filter((r) => !r.success);
       if (failedBatches.length > 0) {
@@ -312,7 +340,9 @@ export class RDF4JBulkLoader {
         this.logger.info('='.repeat(50));
         failedBatches.forEach((batch) => {
           const skipFeatures = batch.batchIndex * this.options.batchSize;
-          this.logger.info(`Batch ${batch.batchIndex + 1}: --skipFeatures ${skipFeatures}`);
+          this.logger.info(
+            `Batch ${batch.batchIndex + 1}: --skipFeatures ${skipFeatures}`
+          );
         });
         this.logger.info('='.repeat(50));
       }
@@ -324,50 +354,65 @@ export class RDF4JBulkLoader {
   /**
    * Insert a batch of triples with retry mechanism
    */
-  private async insertBatchWithRetry(triples: RDFTriple[], batchNumber: number): Promise<void> {
+  private async insertBatchWithRetry(
+    triples: RDFTriple[],
+    batchNumber: number
+  ): Promise<void> {
     const maxRetries = this.options.maxRetries || 3;
     let lastError: any;
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
       try {
         if (attempt > 1) {
-          this.logger.info(`Retrying batch ${batchNumber}, attempt ${attempt}/${maxRetries + 1}`);
+          this.logger.info(
+            `Retrying batch ${batchNumber}, attempt ${attempt}/${
+              maxRetries + 1
+            }`
+          );
         }
-        
+
         await this.insertBatch(triples);
-        
+
         if (attempt > 1) {
-          this.logger.info(`Batch ${batchNumber} succeeded on attempt ${attempt}`);
+          this.logger.info(
+            `Batch ${batchNumber} succeeded on attempt ${attempt}`
+          );
         }
         return; // Success, exit retry loop
-        
       } catch (error) {
         lastError = error;
-        
+
         // Check if this is a retryable error
         if (!this.isRetryableError(error)) {
-          this.logger.warn(`Batch ${batchNumber} failed with non-retryable error: ${error}`);
+          this.logger.warn(
+            `Batch ${batchNumber} failed with non-retryable error: ${error}`
+          );
           throw error;
         }
-        
+
         // If this was the last attempt, throw the error
         if (attempt > maxRetries) {
-          this.logger.error(`Batch ${batchNumber} failed after ${maxRetries} retries`);
+          this.logger.error(
+            `Batch ${batchNumber} failed after ${maxRetries} retries`
+          );
           throw error;
         }
-        
+
         // Calculate exponential backoff delay
         const baseDelay = 1000; // 1 second
-        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000; // Add jitter
-        
+        const delay =
+          baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000; // Add jitter
+
         this.logger.warn(
-          `Batch ${batchNumber} failed on attempt ${attempt}/${maxRetries + 1}: ${error}. Retrying in ${Math.round(delay)}ms...`
+          `Batch ${batchNumber} failed on attempt ${attempt}/${
+            maxRetries + 1
+          }: ${error}. Retrying in ${Math.round(delay)}ms...`
         );
-        
+
         await this.delay(delay);
       }
     }
-    
+
     throw lastError;
   }
 
@@ -402,20 +447,105 @@ export class RDF4JBulkLoader {
    */
   private async insertBatchVirtuoso(triples: RDFTriple[]): Promise<void> {
     const sparqlUpdate = this.buildInsertDataQueryVirtuoso(triples);
-    
-    const response = await fetch(this.endpointUrl, {
+
+    if (!this.options.username || !this.options.password) {
+      throw new Error('Username and password are required for Virtuoso server authentication');
+    }
+
+    // First request to get digest challenge
+    const initialResponse = await fetch(this.endpointUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/sparql-update',
       },
       body: sparqlUpdate,
-      timeout: this.options.timeout || 30000,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    if (initialResponse.status === 401) {
+      // Get WWW-Authenticate header
+      const authHeader = initialResponse.headers.get('www-authenticate');
+      if (!authHeader || !authHeader.toLowerCase().includes('digest')) {
+        throw new Error('Server does not support digest authentication');
+      }
+
+      // Parse digest challenge
+      const digestAuth = this.parseDigestAuth(authHeader);
+      
+      // Create digest response
+      const authString = this.createDigestAuth(
+        'POST',
+        new URL(this.endpointUrl).pathname,
+        digestAuth,
+        this.options.username,
+        this.options.password
+      );
+
+      // Retry request with digest authentication
+      const authResponse = await fetch(this.endpointUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/sparql-update',
+          'Authorization': authString,
+        },
+        body: sparqlUpdate,
+      });
+
+      if (!authResponse.ok) {
+        const errorText = await authResponse.text();
+        throw new Error(`HTTP ${authResponse.status}: ${errorText}`);
+      }
+    } else if (!initialResponse.ok) {
+      const errorText = await initialResponse.text();
+      throw new Error(`HTTP ${initialResponse.status}: ${errorText}`);
     }
+  }
+
+  /**
+   * Parse digest authentication header
+   */
+  private parseDigestAuth(authHeader: string): any {
+    const digest: any = {};
+    const authParts = authHeader.replace('Digest ', '').split(',');
+    
+    authParts.forEach(part => {
+      const [key, value] = part.trim().split('=');
+      digest[key] = value.replace(/"/g, '');
+    });
+    
+    return digest;
+  }
+
+  /**
+   * Create digest authorization header
+   */
+  private createDigestAuth(
+    method: string,
+    uri: string,
+    digest: any,
+    username: string,
+    password: string
+  ): string {
+    const nc = '00000001';
+    const cnonce = crypto.randomBytes(16).toString('hex');
+    
+    const ha1 = crypto
+      .createHash('md5')
+      .update(`${username}:${digest.realm}:${password}`)
+      .digest('hex');
+    
+    const ha2 = crypto
+      .createHash('md5')
+      .update(`${method}:${uri}`)
+      .digest('hex');
+    
+    const response = crypto
+      .createHash('md5')
+      .update(`${ha1}:${digest.nonce}:${nc}:${cnonce}:${digest.qop}:${ha2}`)
+      .digest('hex');
+    
+    return `Digest username="${username}", realm="${digest.realm}", ` +
+           `nonce="${digest.nonce}", uri="${uri}", qop=${digest.qop}, ` +
+           `nc=${nc}, cnonce="${cnonce}", response="${response}"`;
   }
 
   /**
@@ -519,7 +649,7 @@ ${tripleStatements} .
 
     if (this.options.serverType === 'virtuoso') {
       // For Virtuoso, the endpoint is typically /sparql
-      return `${cleanBaseUrl}/sparql`;
+      return `${cleanBaseUrl}/sparql-auth`;
     } else {
       // For RDF4J
       // Check if the URL already includes the repository path
@@ -569,14 +699,19 @@ ${tripleStatements} .
     ];
 
     // Check for non-retryable patterns first
-    if (nonRetryablePatterns.some((pattern) => 
-        errorMessage.includes(pattern) || errorName.includes(pattern))) {
+    if (
+      nonRetryablePatterns.some(
+        (pattern) =>
+          errorMessage.includes(pattern) || errorName.includes(pattern)
+      )
+    ) {
       return false;
     }
 
     // Check for retryable patterns
-    return retryablePatterns.some((pattern) => 
-      errorMessage.includes(pattern) || errorName.includes(pattern));
+    return retryablePatterns.some(
+      (pattern) => errorMessage.includes(pattern) || errorName.includes(pattern)
+    );
   }
 
   /**
