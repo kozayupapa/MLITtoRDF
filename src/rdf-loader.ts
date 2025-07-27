@@ -8,6 +8,7 @@ import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
 import { Logger } from 'winston';
 import { RDFTriple } from './geo-transformer';
 import { generateSparqlPrefixes } from './ontology-config';
+import fetch from 'node-fetch';
 
 export interface LoaderOptions {
   rdf4jEndpoint: string;
@@ -16,6 +17,7 @@ export interface LoaderOptions {
   logger?: Logger;
   timeout?: number;
   maxRetries?: number;
+  serverType?: 'rdf4j' | 'virtuoso';
 }
 
 export interface TripleBatchInfo {
@@ -54,6 +56,11 @@ export class RDF4JBulkLoader {
   constructor(options: LoaderOptions) {
     this.options = options;
     this.logger = options.logger || (console as any);
+    
+    // Default to RDF4J server type if not specified
+    if (!this.options.serverType) {
+      this.options.serverType = 'rdf4j';
+    }
 
     // Construct full endpoint URL
     this.endpointUrl = this.buildEndpointUrl(
@@ -67,7 +74,7 @@ export class RDF4JBulkLoader {
     });
 
     this.logger.info(
-      `Initialized RDF4J loader for endpoint: ${this.endpointUrl}`
+      `Initialized ${this.options.serverType.toUpperCase()} loader for endpoint: ${this.endpointUrl}`
     );
     this.logger.info(`Batch size: ${options.batchSize}`);
   }
@@ -368,21 +375,51 @@ export class RDF4JBulkLoader {
    * Insert a batch of triples using SPARQL UPDATE
    */
   private async insertBatch(triples: RDFTriple[]): Promise<void> {
-    const sparqlUpdate = this.buildInsertDataQuery(triples);
-
     try {
-      await this.fetcher.fetchUpdate(this.endpointUrl, sparqlUpdate);
+      if (this.options.serverType === 'virtuoso') {
+        await this.insertBatchVirtuoso(triples);
+      } else {
+        await this.insertBatchRDF4J(triples);
+      }
     } catch (error) {
       this.logger.debug(
         `SPARQL UPDATE failed for batch of ${triples.length} triples: ${error}`
       );
-      this.logger.debug(`Query: ${sparqlUpdate.substring(0, 500)}...`);
       throw error;
     }
   }
 
   /**
-   * Build SPARQL INSERT DATA query for a batch of triples
+   * Insert a batch of triples to RDF4J server
+   */
+  private async insertBatchRDF4J(triples: RDFTriple[]): Promise<void> {
+    const sparqlUpdate = this.buildInsertDataQuery(triples);
+    await this.fetcher.fetchUpdate(this.endpointUrl, sparqlUpdate);
+  }
+
+  /**
+   * Insert a batch of triples to Virtuoso server
+   */
+  private async insertBatchVirtuoso(triples: RDFTriple[]): Promise<void> {
+    const sparqlUpdate = this.buildInsertDataQueryVirtuoso(triples);
+    
+    const response = await fetch(this.endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sparql-update',
+      },
+      body: sparqlUpdate,
+      timeout: this.options.timeout || 30000,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+  }
+
+  /**
+   * Build SPARQL INSERT DATA query for a batch of triples (RDF4J)
    */
   private buildInsertDataQuery(triples: RDFTriple[]): string {
     const prefixes = generateSparqlPrefixes();
@@ -395,6 +432,28 @@ export class RDF4JBulkLoader {
 
 INSERT DATA {
 ${tripleStatements} .
+}`;
+  }
+
+  /**
+   * Build SPARQL INSERT DATA query for a batch of triples (Virtuoso)
+   */
+  private buildInsertDataQueryVirtuoso(triples: RDFTriple[]): string {
+    const prefixes = generateSparqlPrefixes();
+
+    const tripleStatements = triples
+      .map((triple) => `    ${this.formatTripleForSparql(triple)}`)
+      .join(' .\n');
+
+    // Use a specific graph for Virtuoso
+    const graphUri = 'http://example.com/geosparql-data-direct';
+
+    return `${prefixes}
+
+INSERT DATA {
+  GRAPH <${graphUri}> {
+${tripleStatements} .
+  }
 }`;
   }
 
@@ -452,19 +511,25 @@ ${tripleStatements} .
   }
 
   /**
-   * Build full RDF4J endpoint URL
+   * Build full endpoint URL based on server type
    */
   private buildEndpointUrl(baseUrl: string, repositoryId: string): string {
     // Remove trailing slash from base URL if present
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
 
-    // Check if the URL already includes the repository path
-    if (cleanBaseUrl.includes(`/repositories/${repositoryId}`)) {
-      return `${cleanBaseUrl}/statements`;
-    }
+    if (this.options.serverType === 'virtuoso') {
+      // For Virtuoso, the endpoint is typically /sparql
+      return `${cleanBaseUrl}/sparql`;
+    } else {
+      // For RDF4J
+      // Check if the URL already includes the repository path
+      if (cleanBaseUrl.includes(`/repositories/${repositoryId}`)) {
+        return `${cleanBaseUrl}/statements`;
+      }
 
-    // Construct full URL
-    return `${cleanBaseUrl}/repositories/${repositoryId}/statements`;
+      // Construct full URL
+      return `${cleanBaseUrl}/repositories/${repositoryId}/statements`;
+    }
   }
 
   /**

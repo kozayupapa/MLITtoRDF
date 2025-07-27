@@ -29,6 +29,7 @@ interface CLIOptions {
   dryRun: boolean;
   includePopulationSnapshots: boolean;
   dataType: 'population-geojson' | 'landuse-geojson' | 'auto';
+  serverType: 'rdf4j' | 'virtuoso';
 }
 
 /**
@@ -217,6 +218,7 @@ class MLITGeoJSONToRDF4J {
       logger: this.logger,
       timeout: 60000, // 60 seconds
       maxRetries: 3,
+      serverType: this.options.serverType,
     });
   }
 
@@ -489,6 +491,7 @@ class MLITGeoJSONToRDF4J {
     this.logger.info('Configuration:');
     this.logger.info(`  Input files: ${this.options.filePaths.join(', ')}`);
     this.logger.info(`  Data type: ${this.options.dataType}`);
+    this.logger.info(`  Server type: ${this.options.serverType}`);
     this.logger.info(`  RDF4J endpoint: ${this.options.rdf4jEndpoint}`);
     this.logger.info(`  Repository ID: ${this.options.repositoryId}`);
     this.logger.info(`  Base URI: ${this.options.baseUri}`);
@@ -603,6 +606,11 @@ async function main(): Promise<void> {
       '--includePopulationSnapshots',
       'Include detailed population snapshot data',
       true
+    )
+    .option(
+      '--serverType <type>',
+      'RDF server type: rdf4j or virtuoso',
+      'rdf4j'
     );
 
   program.parse();
@@ -641,6 +649,17 @@ async function main(): Promise<void> {
       `Invalid data type: ${
         options.dataType
       }. Must be one of: ${validDataTypes.join(', ')}`
+    );
+    process.exit(1);
+  }
+
+  // Validate server type
+  const validServerTypes = ['rdf4j', 'virtuoso'];
+  if (!validServerTypes.includes(options.serverType)) {
+    console.error(
+      `Invalid server type: ${
+        options.serverType
+      }. Must be one of: ${validServerTypes.join(', ')}`
     );
     process.exit(1);
   }
