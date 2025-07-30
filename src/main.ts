@@ -88,7 +88,6 @@ class MLITGeoJSONToRDF4J {
       await this.validateInputs();
 
       // Initialize components
-      const transformer = this.createTransformer();
       const loader = this.createLoader();
 
       // Test RDF4J connection if requested
@@ -97,7 +96,7 @@ class MLITGeoJSONToRDF4J {
       }
 
       // Process the data
-      const result = await this.processData(transformer, loader);
+      const result = await this.processData(loader);
 
       // Log final results
       this.logResults(result, Date.now() - startTime);
@@ -201,11 +200,12 @@ class MLITGeoJSONToRDF4J {
   /**
    * Create and configure the GeoSPARQL transformer
    */
-  private createTransformer(): GeoSPARQLTransformer {
+  private createTransformer(currentFilePath?: string): GeoSPARQLTransformer {
     return new GeoSPARQLTransformer({
       baseUri: this.options.baseUri,
       includePopulationSnapshots: this.options.includePopulationSnapshots,
       logger: this.logger,
+      currentFilePath,
     });
   }
 
@@ -250,7 +250,6 @@ class MLITGeoJSONToRDF4J {
    * Main data processing pipeline - Memory-efficient sequential processing
    */
   private async processData(
-    transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader
   ): Promise<LoadResult | null> {
     this.logger.info(
@@ -280,7 +279,6 @@ class MLITGeoJSONToRDF4J {
 
         const fileResult = await this.processFileSequentially(
           filePath,
-          transformer,
           loader,
           totalProcessedFeatures
         );
@@ -333,7 +331,6 @@ class MLITGeoJSONToRDF4J {
    */
   private async processFileSequentially(
     filePath: string,
-    transformer: GeoSPARQLTransformer,
     loader: RDF4JBulkLoader,
     globalFeatureOffset: number
   ): Promise<{
@@ -352,6 +349,9 @@ class MLITGeoJSONToRDF4J {
     const errors: string[] = [];
 
     try {
+      // Create file-specific transformer with path context
+      const transformer = this.createTransformer(filePath);
+      
       // Create a single-file parser
       const singleFileParser = new GeoJSONSyncParser({
         inputFilePaths: [filePath],

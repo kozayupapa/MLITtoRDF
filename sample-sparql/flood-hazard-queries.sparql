@@ -1,0 +1,142 @@
+# 洪水ハザードゾーン用のSPARQLクエリ集
+# 
+# このファイルには、新しく拡張された洪水ハザードデータオントロジーを
+# 活用するためのクエリサンプルが含まれています。
+
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# ================================================================
+# クエリ1: 浸水深ランクが高い（3以上）エリアの検索
+# ================================================================
+SELECT ?hazardZone ?riverName ?prefectureName ?depthRank ?description ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:floodDepthRank ?depthRank ;
+                mlit:floodDepthRank_description ?description ;
+                mlit:riverName ?riverName ;
+                mlit:prefectureName ?prefectureName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    
+    FILTER(?depthRank >= 3)
+}
+ORDER BY DESC(?depthRank)
+LIMIT 100
+
+# ================================================================
+# クエリ2: 特定の県の浸水継続時間が長い（4時間以上）エリア
+# ================================================================
+SELECT ?hazardZone ?riverName ?durationRank ?durationHours ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:floodDurationRank ?durationRank ;
+                mlit:floodDurationRank_hours ?durationHours ;
+                mlit:riverName ?riverName ;
+                mlit:prefectureName "石川県" ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    
+    FILTER(?durationRank >= 4)
+}
+ORDER BY DESC(?durationHours)
+
+# ================================================================
+# クエリ3: 氾濫流による家屋倒壊危険区域の検索
+# ================================================================
+SELECT ?hazardZone ?riverName ?hazardType ?description ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:hazardZoneType "overflow" ;
+                mlit:hazardZoneType_description ?description ;
+                mlit:riverName ?riverName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+}
+
+# ================================================================
+# クエリ4: 河岸侵食による家屋倒壊危険区域の検索
+# ================================================================
+SELECT ?hazardZone ?riverName ?hazardType ?description ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:hazardZoneType "erosion" ;
+                mlit:hazardZoneType_description ?description ;
+                mlit:riverName ?riverName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+}
+
+# ================================================================
+# クエリ5: 深刻度別ハザードゾーン統計
+# ================================================================
+SELECT ?depthRank ?description (COUNT(?hazardZone) as ?count)
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:floodDepthRank ?depthRank ;
+                mlit:floodDepthRank_description ?description .
+}
+GROUP BY ?depthRank ?description
+ORDER BY ?depthRank
+
+# ================================================================
+# クエリ6: 特定の河川の全ハザード情報
+# ================================================================
+SELECT ?hazardZone ?hazardType ?depthRank ?durationRank ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:riverName "大聖寺川" ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    
+    OPTIONAL { ?hazardZone mlit:floodDepthRank ?depthRank }
+    OPTIONAL { ?hazardZone mlit:floodDurationRank ?durationRank }
+    OPTIONAL { ?hazardZone mlit:hazardZoneType ?hazardType }
+}
+
+# ================================================================
+# クエリ7: 浸水深と継続時間の複合条件検索
+# ================================================================
+SELECT ?hazardZone ?riverName ?depthRank ?durationRank ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:riverName ?riverName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    
+    OPTIONAL { ?hazardZone mlit:floodDepthRank ?depthRank }
+    OPTIONAL { ?hazardZone mlit:floodDurationRank ?durationRank }
+    
+    FILTER((?depthRank >= 3) || (?durationRank >= 5))
+}
+
+# ================================================================
+# クエリ8: 県別ハザードゾーン数の集計
+# ================================================================
+SELECT ?prefectureName (COUNT(?hazardZone) as ?hazardZoneCount)
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:prefectureName ?prefectureName .
+}
+GROUP BY ?prefectureName
+ORDER BY DESC(?hazardZoneCount)
+
+# ================================================================
+# クエリ9: 地理的近接性検索用のベースクエリ
+# ================================================================
+SELECT ?hazardZone ?riverName ?depthRank ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:riverName ?riverName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    
+    OPTIONAL { ?hazardZone mlit:floodDepthRank ?depthRank }
+    
+    # 地理的フィルタリングは実際の使用時に追加
+    # FILTER(geo:sfWithin(?geom, "POLYGON((...))"))
+}
+LIMIT 1000
