@@ -5,6 +5,7 @@
  */
 
 import proj4 from 'proj4';
+import { createHash } from 'crypto';
 import { Logger } from 'winston';
 import { GeoJSONFeature } from './data-parser';
 import wellknown from 'wellknown';
@@ -140,10 +141,14 @@ export class GeoSPARQLTransformer {
       );
     }
 
-    // Generate IRIs
+    // Generate unique identifier from geometry hash to distinguish features with same riverId
+    const geometryHash = this.generateGeometryHash(feature.geometry);
+    const uniqueId = `${riverId}_${hazardType}_${geometryHash.substring(0, 8)}`;
+    
+    // Generate IRIs with unique identifier
     const hazardZoneIRI = generateFloodHazardZoneIRI(
       baseUri,
-      riverId,
+      uniqueId,
       hazardType
     );
     const geometryIRI = `${hazardZoneIRI}_geom`;
@@ -808,6 +813,14 @@ export class GeoSPARQLTransformer {
    */
   private createDoubleLiteral(value: number): string {
     return `"${value}"^^<${RDF_PREFIXES.xsd}double>`;
+  }
+
+  /**
+   * Generate a hash from geometry to create unique identifiers
+   */
+  private generateGeometryHash(geometry: any): string {
+    const geometryString = JSON.stringify(geometry);
+    return createHash('sha256').update(geometryString).digest('hex');
   }
 }
 
