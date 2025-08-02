@@ -28,6 +28,7 @@ export interface TransformerOptions {
   logger?: Logger;
   includePopulationSnapshots?: boolean;
   currentFilePath?: string;
+  minFloodDepthRank?: number;
 }
 
 export interface RDFTriple {
@@ -139,6 +140,18 @@ export class GeoSPARQLTransformer {
       throw new Error(
         `Flood hazard feature missing required river ID (${propertyMappings.riverIdProp})`
       );
+    }
+
+    // Filter out low-rank flood depth data for data reduction
+    if (this.shouldSkipLowRankFeature(hazardType, rankCode)) {
+      return {
+        triples: [],
+        featureIRI: '',
+        geometryIRI: '',
+        populationSnapshotIRIs: [],
+        landUseIRIs: [],
+        floodHazardZoneIRIs: [],
+      };
     }
 
     // Generate unique identifier from geometry hash to distinguish features with same riverId
@@ -821,6 +834,21 @@ export class GeoSPARQLTransformer {
   private generateGeometryHash(geometry: any): string {
     const geometryString = JSON.stringify(geometry);
     return createHash('sha256').update(geometryString).digest('hex');
+  }
+
+  /**
+   * Check if feature should be skipped based on rank filtering for data reduction
+   */
+  private shouldSkipLowRankFeature(hazardType: string, rankCode: number): boolean {
+    const minRank = this.options.minFloodDepthRank ?? 2;
+    
+    // Apply rank filtering only to flood depth data types
+    if (hazardType === 'planned_scale_depth' || hazardType === 'maximum_assumed_depth') {
+      return rankCode < minRank;
+    }
+    
+    // No filtering for other hazard types
+    return false;
   }
 }
 
