@@ -79,7 +79,7 @@ export class GeoSPARQLTransformer {
     if (this.isFloodHazardData(feature)) {
       return this.transformFloodHazardFeature(feature);
     }
-    
+
     // Default to population/land use data transformation
     return this.transformPopulationLandUseFeature(feature);
   }
@@ -89,33 +89,63 @@ export class GeoSPARQLTransformer {
    */
   private isFloodHazardData(feature: GeoJSONFeature): boolean {
     const props = feature.properties;
-    return !!(props.A31a_101 || props.A31a_102 || props.A31a_103 || props.A31a_104 || props.A31a_105);
+    // Check for all possible flood hazard property patterns
+    return !!(
+      // 計画規模(A31a_1xx)
+      (
+        props.A31a_101 ||
+        props.A31a_102 ||
+        props.A31a_105 ||
+        // 想定最大規模 (A31a_2xx)
+        props.A31a_201 ||
+        props.A31a_202 ||
+        props.A31a_205 ||
+        // 浸水継続時間 (A31a_3xx)
+        props.A31a_301 ||
+        props.A31a_302 ||
+        props.A31a_305 ||
+        // 家屋倒壊氾濫・河岸侵食 (A31a_4xx)
+        props.A31a_401 ||
+        props.A31a_402 ||
+        props.A31a_405
+      )
+    );
   }
 
   /**
    * Transform a flood hazard GeoJSON feature to RDF triples
    */
-  public transformFloodHazardFeature(feature: GeoJSONFeature): TransformationResult {
+  public transformFloodHazardFeature(
+    feature: GeoJSONFeature
+  ): TransformationResult {
     const { baseUri } = this.options;
     const triples: RDFTriple[] = [];
     const floodHazardZoneIRIs: string[] = [];
 
     const props = feature.properties;
-    const riverId = props.A31a_101;
-    const riverName = props.A31a_102;
-    const prefectureCode = props.A31a_103;
-    const prefectureName = props.A31a_104;
-    const rankCode = props.A31a_105;
-
-    if (!riverId) {
-      throw new Error('Flood hazard feature missing required river ID (A31a_101)');
-    }
 
     // Determine hazard type from file path or directory name
     const hazardType = this.determineHazardType(feature);
-    
+
+    // Get appropriate property mappings based on hazard type
+    const propertyMappings = this.getPropertyMappings(hazardType);
+
+    const riverId = props[propertyMappings.riverIdProp];
+    const riverName = props[propertyMappings.riverNameProp];
+    const rankCode = props[propertyMappings.rangeProp];
+
+    if (!riverId) {
+      throw new Error(
+        `Flood hazard feature missing required river ID (${propertyMappings.riverIdProp})`
+      );
+    }
+
     // Generate IRIs
-    const hazardZoneIRI = generateFloodHazardZoneIRI(baseUri, riverId, hazardType);
+    const hazardZoneIRI = generateFloodHazardZoneIRI(
+      baseUri,
+      riverId,
+      hazardType
+    );
     const geometryIRI = `${hazardZoneIRI}_geom`;
     const riverIRI = generateRiverIRI(baseUri, riverId);
 
@@ -123,46 +153,72 @@ export class GeoSPARQLTransformer {
 
     // Add type declarations
     triples.push(
-      this.createTriple(hazardZoneIRI, `${RDF_PREFIXES.rdf}type`, `${RDF_PREFIXES.geo}Feature`),
-      this.createTriple(hazardZoneIRI, `${RDF_PREFIXES.rdf}type`, MLIT_CLASSES.FloodHazardZone),
-      this.createTriple(geometryIRI, `${RDF_PREFIXES.rdf}type`, `${RDF_PREFIXES.geo}Geometry`)
+      this.createTriple(
+        hazardZoneIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Feature`
+      ),
+      this.createTriple(
+        hazardZoneIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        MLIT_CLASSES.FloodHazardZone
+      ),
+      this.createTriple(
+        geometryIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Geometry`
+      )
     );
 
     // Link hazard zone to geometry
     triples.push(
-      this.createTriple(hazardZoneIRI, `${RDF_PREFIXES.geo}hasGeometry`, geometryIRI)
+      this.createTriple(
+        hazardZoneIRI,
+        `${RDF_PREFIXES.geo}hasGeometry`,
+        geometryIRI
+      )
     );
 
     // Transform and add geometry
     const wktGeometry = this.transformGeometry(feature.geometry);
     triples.push(
-      this.createTriple(geometryIRI, `${RDF_PREFIXES.geo}asWKT`, this.createWKTLiteral(wktGeometry))
+      this.createTriple(
+        geometryIRI,
+        `${RDF_PREFIXES.geo}asWKT`,
+        this.createWKTLiteral(wktGeometry)
+      )
     );
 
     // Create river entity if not exists
     triples.push(
-      this.createTriple(riverIRI, `${RDF_PREFIXES.rdf}type`, `${MLIT_CLASSES.AdministrativeArea}`),
-      this.createTriple(hazardZoneIRI, MLIT_PREDICATES.riverId, this.createStringLiteral(riverId))
+      this.createTriple(
+        riverIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${MLIT_CLASSES.AdministrativeArea}`
+      ),
+      this.createTriple(
+        hazardZoneIRI,
+        MLIT_PREDICATES.riverId,
+        this.createStringLiteral(riverId)
+      )
     );
 
     if (riverName) {
       triples.push(
-        this.createTriple(riverIRI, MLIT_PREDICATES.riverName, this.createStringLiteral(riverName)),
-        this.createTriple(hazardZoneIRI, MLIT_PREDICATES.riverName, this.createStringLiteral(riverName))
+        this.createTriple(
+          riverIRI,
+          MLIT_PREDICATES.riverName,
+          this.createStringLiteral(riverName)
+        ),
+        this.createTriple(
+          hazardZoneIRI,
+          MLIT_PREDICATES.riverName,
+          this.createStringLiteral(riverName)
+        )
       );
     }
 
-    if (prefectureCode) {
-      triples.push(
-        this.createTriple(hazardZoneIRI, MLIT_PREDICATES.prefectureCode, this.createStringLiteral(prefectureCode))
-      );
-    }
-
-    if (prefectureName) {
-      triples.push(
-        this.createTriple(hazardZoneIRI, MLIT_PREDICATES.prefectureName, this.createStringLiteral(prefectureName))
-      );
-    }
+    // Prefecture data removed for data size reduction
 
     // Add hazard-specific data based on type
     if (rankCode !== null && rankCode !== undefined) {
@@ -171,7 +227,11 @@ export class GeoSPARQLTransformer {
 
     // Add hazard type
     triples.push(
-      this.createTriple(hazardZoneIRI, MLIT_PREDICATES.hazardZoneType, this.createStringLiteral(hazardType))
+      this.createTriple(
+        hazardZoneIRI,
+        MLIT_PREDICATES.hazardZoneType,
+        this.createStringLiteral(hazardType)
+      )
     );
 
     return {
@@ -185,11 +245,55 @@ export class GeoSPARQLTransformer {
   }
 
   /**
+   * Get property mappings based on hazard type
+   */
+  private getPropertyMappings(hazardType: string): {
+    riverIdProp: string;
+    riverNameProp: string;
+    rangeProp: string;
+  } {
+    if (hazardType === 'planned_scale_depth') {
+      // 計画規模
+      return {
+        riverIdProp: 'A31a_101',
+        riverNameProp: 'A31a_102',
+        rangeProp: 'A31a_105',
+      };
+    } else if (hazardType === 'maximum_assumed_depth') {
+      // 想定最大規模
+      return {
+        riverIdProp: 'A31a_201',
+        riverNameProp: 'A31a_202',
+        rangeProp: 'A31a_205',
+      };
+    } else if (hazardType === 'flood_duration') {
+      // 浸水継続時間 uses A31a_305
+      return {
+        riverIdProp: 'A31a_301',
+        riverNameProp: 'A31a_302',
+        rangeProp: 'A31a_305',
+      };
+    } else if (
+      hazardType === 'overflow_collapse_zone' ||
+      hazardType === 'erosion_collapse_zone'
+    ) {
+      // 家屋倒壊氾濫、河岸侵食 uses A31a_405
+      return {
+        riverIdProp: 'A31a_401',
+        riverNameProp: 'A31a_402',
+        rangeProp: 'A31a_405',
+      };
+    } else {
+      throw new Error(`Invalid hazard type: ${hazardType}`);
+    }
+  }
+
+  /**
    * Determine hazard type from feature context
    */
   private determineHazardType(_feature: GeoJSONFeature): string {
     const filePath = this.options.currentFilePath || '';
-    
+
     if (filePath.includes('10_計画規模')) {
       return 'planned_scale_depth';
     } else if (filePath.includes('20_想定最大規模')) {
@@ -201,7 +305,7 @@ export class GeoSPARQLTransformer {
     } else if (filePath.includes('42_家屋倒壊等氾濫想定区域_河岸侵食')) {
       return 'erosion_collapse_zone';
     }
-    
+
     // Default fallback
     return 'flood_hazard';
   }
@@ -209,35 +313,89 @@ export class GeoSPARQLTransformer {
   /**
    * Add hazard-specific RDF data based on type and rank code
    */
-  private addHazardSpecificData(triples: RDFTriple[], subjectIRI: string, hazardType: string, rankCode: number): void {
-    if (hazardType === 'planned_scale_depth' || hazardType === 'maximum_assumed_depth') {
+  private addHazardSpecificData(
+    triples: RDFTriple[],
+    subjectIRI: string,
+    hazardType: string,
+    rankCode: number
+  ): void {
+    if (
+      hazardType === 'planned_scale_depth' ||
+      hazardType === 'maximum_assumed_depth'
+    ) {
       // Flood depth data
-      const depthInfo = FLOOD_DEPTH_RANKS[rankCode as keyof typeof FLOOD_DEPTH_RANKS];
+      const depthInfo =
+        FLOOD_DEPTH_RANKS[rankCode as keyof typeof FLOOD_DEPTH_RANKS];
       if (depthInfo) {
         triples.push(
-          this.createTriple(subjectIRI, MLIT_PREDICATES.floodDepthRank, this.createIntegerLiteral(rankCode)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.floodDepthRank}_description`, this.createStringLiteral(depthInfo.description)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.floodDepthRank}_min`, this.createDoubleLiteral(depthInfo.min)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.floodDepthRank}_max`, this.createDoubleLiteral(depthInfo.max === Infinity ? 999.0 : depthInfo.max))
+          this.createTriple(
+            subjectIRI,
+            MLIT_PREDICATES.floodDepthRank,
+            this.createIntegerLiteral(rankCode)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.floodDepthRank}_description`,
+            this.createStringLiteral(depthInfo.description)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.floodDepthRank}_min`,
+            this.createDoubleLiteral(depthInfo.min)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.floodDepthRank}_max`,
+            this.createDoubleLiteral(
+              depthInfo.max === Infinity ? 999.0 : depthInfo.max
+            )
+          )
         );
       }
     } else if (hazardType === 'flood_duration') {
       // Flood duration data
-      const durationInfo = FLOOD_DURATION_RANKS[rankCode as keyof typeof FLOOD_DURATION_RANKS];
+      const durationInfo =
+        FLOOD_DURATION_RANKS[rankCode as keyof typeof FLOOD_DURATION_RANKS];
       if (durationInfo) {
         triples.push(
-          this.createTriple(subjectIRI, MLIT_PREDICATES.floodDurationRank, this.createIntegerLiteral(rankCode)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.floodDurationRank}_description`, this.createStringLiteral(durationInfo.description)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.floodDurationRank}_hours`, this.createIntegerLiteral(durationInfo.hours === Infinity ? 999999 : durationInfo.hours))
+          this.createTriple(
+            subjectIRI,
+            MLIT_PREDICATES.floodDurationRank,
+            this.createIntegerLiteral(rankCode)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.floodDurationRank}_description`,
+            this.createStringLiteral(durationInfo.description)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.floodDurationRank}_hours`,
+            this.createIntegerLiteral(
+              durationInfo.hours === Infinity ? 999999 : durationInfo.hours
+            )
+          )
         );
       }
-    } else if (hazardType === 'overflow_collapse_zone' || hazardType === 'erosion_collapse_zone') {
+    } else if (
+      hazardType === 'overflow_collapse_zone' ||
+      hazardType === 'erosion_collapse_zone'
+    ) {
       // Hazard zone type data
-      const zoneInfo = HAZARD_ZONE_TYPES[rankCode as keyof typeof HAZARD_ZONE_TYPES];
+      const zoneInfo =
+        HAZARD_ZONE_TYPES[rankCode as keyof typeof HAZARD_ZONE_TYPES];
       if (zoneInfo) {
         triples.push(
-          this.createTriple(subjectIRI, MLIT_PREDICATES.hazardZoneType, this.createStringLiteral(zoneInfo.type)),
-          this.createTriple(subjectIRI, `${MLIT_PREDICATES.hazardZoneType}_description`, this.createStringLiteral(zoneInfo.description))
+          this.createTriple(
+            subjectIRI,
+            MLIT_PREDICATES.hazardZoneType,
+            this.createStringLiteral(zoneInfo.type)
+          ),
+          this.createTriple(
+            subjectIRI,
+            `${MLIT_PREDICATES.hazardZoneType}_description`,
+            this.createStringLiteral(zoneInfo.description)
+          )
         );
       }
     }
@@ -246,7 +404,9 @@ export class GeoSPARQLTransformer {
   /**
    * Transform a population/land use GeoJSON feature to RDF triples (original method)
    */
-  public transformPopulationLandUseFeature(feature: GeoJSONFeature): TransformationResult {
+  public transformPopulationLandUseFeature(
+    feature: GeoJSONFeature
+  ): TransformationResult {
     const { baseUri, includePopulationSnapshots = true } = this.options;
     const triples: RDFTriple[] = [];
 
