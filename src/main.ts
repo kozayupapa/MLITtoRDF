@@ -28,7 +28,7 @@ interface CLIOptions {
   testConnection: boolean;
   dryRun: boolean;
   includePopulationSnapshots: boolean;
-  dataType: 'population-geojson' | 'landuse-geojson' | 'auto';
+  dataType: 'population-geojson' | 'landuse-geojson' | 'flood-geojson' | 'auto';
 }
 
 /**
@@ -136,6 +136,17 @@ class MLITGeoJSONToRDF4J {
             ) {
               this.options.dataType = 'landuse-geojson';
               this.logger.info('Auto-detected Land Use GeoJSON data format');
+            } else if (
+              firstFeature.properties &&
+              (firstFeature.properties.A31a_101 ||
+                firstFeature.properties.A31a_201 ||
+                firstFeature.properties.A31a_301 ||
+                firstFeature.properties.A31a_401)
+            ) {
+              this.options.dataType = 'flood-geojson';
+              this.logger.info(
+                'Auto-detected flood hazard GeoJSON data format'
+              );
             } else {
               this.options.dataType = 'population-geojson';
               this.logger.info('Auto-detected Population GeoJSON data format');
@@ -345,7 +356,7 @@ class MLITGeoJSONToRDF4J {
     try {
       // Create file-specific transformer with path context
       const transformer = this.createTransformer(filePath);
-      
+
       // Create a single-file parser
       const singleFileParser = new GeoJSONSyncParser({
         inputFilePaths: [filePath],
@@ -562,7 +573,7 @@ async function main(): Promise<void> {
     .requiredOption('--repositoryId <id>', 'RDF4J repository identifier')
     .option(
       '--dataType <type>',
-      'Input data type: population-geojson, landuse-geojson, or auto',
+      'Input data type: population-geojson, landuse-geojson, flood-geojson, or auto',
       'auto'
     )
     .option(
