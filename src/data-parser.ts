@@ -64,7 +64,9 @@ export class GeoJSONSyncParser {
     const { inputFilePaths, maxFeatures, skipFeatures = 0 } = this.options;
     const allFeatures: ParsedFeatureData[] = [];
 
-    this.logger.info(`Starting to parse ${inputFilePaths.length} GeoJSON files`);
+    this.logger.info(
+      `Starting to parse ${inputFilePaths.length} GeoJSON files`
+    );
     this.logger.info(
       `Skip features: ${skipFeatures}, Max features: ${
         maxFeatures || 'unlimited'
@@ -73,9 +75,11 @@ export class GeoJSONSyncParser {
 
     for (let fileIndex = 0; fileIndex < inputFilePaths.length; fileIndex++) {
       const filePath = inputFilePaths[fileIndex];
-      
-      this.logger.info(`Processing file ${fileIndex + 1}/${inputFilePaths.length}: ${filePath}`);
-      
+
+      this.logger.info(
+        `Processing file ${fileIndex + 1}/${inputFilePaths.length}: ${filePath}`
+      );
+
       if (!fs.existsSync(filePath)) {
         this.logger.warn(`Input file does not exist: ${filePath}`);
         continue;
@@ -86,11 +90,17 @@ export class GeoJSONSyncParser {
         const geoJSON = JSON.parse(fileContent);
 
         if (!geoJSON.features || !Array.isArray(geoJSON.features)) {
-          this.logger.warn(`File ${filePath} does not contain valid GeoJSON features array`);
+          this.logger.warn(
+            `File ${filePath} does not contain valid GeoJSON features array`
+          );
           continue;
         }
 
-        for (let featureIndex = 0; featureIndex < geoJSON.features.length; featureIndex++) {
+        for (
+          let featureIndex = 0;
+          featureIndex < geoJSON.features.length;
+          featureIndex++
+        ) {
           const feature = geoJSON.features[featureIndex];
 
           // Validate that this is a valid GeoJSON feature
@@ -131,7 +141,9 @@ export class GeoJSONSyncParser {
           allFeatures.push(parsedData);
         }
 
-        this.logger.info(`Completed file ${filePath}: ${geoJSON.features.length} features found`);
+        this.logger.info(
+          `Completed file ${filePath}: ${geoJSON.features.length} features found`
+        );
       } catch (error) {
         this.logger.error(`Error processing file ${filePath}:`, error);
       }
@@ -157,8 +169,7 @@ export class GeoJSONSyncParser {
       obj.geometry &&
       typeof obj.geometry === 'object' &&
       typeof obj.geometry.type === 'string' &&
-      obj.geometry.coordinates &&
-      (typeof obj.properties.MESH_ID === 'string' || typeof obj.properties.メッシュ === 'string')
+      obj.geometry.coordinates
     );
   }
 
@@ -201,5 +212,5 @@ export function parseGeoJSONSample(
   });
 
   const parsedData = parser.parseAllFeatures();
-  return parsedData.map(data => data.feature);
+  return parsedData.map((data) => data.feature);
 }
