@@ -1,0 +1,23 @@
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?hazardZone ?hazardType ?riverName  ?depthRank ?description ?geometry
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:hazardZoneType ?hazardType ;
+                mlit:floodDepthRank ?depthRank ;
+                mlit:floodDepthRank_description ?description ;
+                mlit:riverName ?riverName ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?geometry .
+    FILTER(?hazardType = "maximum_assumed_depth")
+    FILTER(?depthRank >= 1)
+    FILTER(geof:sfWithin("POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral, ?geometry))
+
+}
+ORDER BY DESC(?depthRank)
+LIMIT 100
