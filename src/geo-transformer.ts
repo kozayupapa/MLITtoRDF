@@ -143,8 +143,8 @@ export class GeoSPARQLTransformer {
 
     // Generate unique identifier from geometry hash to distinguish features with same riverId
     const geometryHash = this.generateGeometryHash(feature.geometry);
-    const uniqueId = `${riverId}_${hazardType}_${geometryHash.substring(0, 8)}`;
-    
+    const uniqueId = `${riverId}_${geometryHash.substring(0, 8)}`;
+
     // Generate IRIs with unique identifier
     const hazardZoneIRI = generateFloodHazardZoneIRI(
       baseUri,
