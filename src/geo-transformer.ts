@@ -247,7 +247,7 @@ export class GeoSPARQLTransformer {
     triples.push(
       this.createTriple(
         hazardZoneIRI,
-        MLIT_PREDICATES.hazardZoneType,
+        MLIT_PREDICATES.hazardType,
         this.createStringLiteral(hazardType)
       )
     );
@@ -839,14 +839,20 @@ export class GeoSPARQLTransformer {
   /**
    * Check if feature should be skipped based on rank filtering for data reduction
    */
-  private shouldSkipLowRankFeature(hazardType: string, rankCode: number): boolean {
+  private shouldSkipLowRankFeature(
+    hazardType: string,
+    rankCode: number
+  ): boolean {
     const minRank = this.options.minFloodDepthRank ?? 2;
-    
+
     // Apply rank filtering only to flood depth data types
-    if (hazardType === 'planned_scale_depth' || hazardType === 'maximum_assumed_depth') {
+    if (
+      hazardType === 'planned_scale_depth' ||
+      hazardType === 'maximum_assumed_depth'
+    ) {
       return rankCode < minRank;
     }
-    
+
     // No filtering for other hazard types
     return false;
   }

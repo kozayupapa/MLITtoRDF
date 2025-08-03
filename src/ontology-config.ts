@@ -79,7 +79,7 @@ export interface MLITPredicates {
   readonly impactRadius: string;
   readonly priorityScore: string;
   // Flood hazard predicates
-  readonly hasFloodHazardData: string;
+  readonly hazardType: string;
   readonly floodDepthRank: string;
   readonly floodDurationRank: string;
   readonly hazardZoneType: string;
@@ -96,9 +96,6 @@ export interface MLITClasses {
   readonly DisasterEvent: string;
   readonly SatelliteImagingArea: string;
   readonly FloodHazardZone: string;
-  readonly FloodDepthRank: string;
-  readonly FloodDurationRank: string;
-  readonly HazardZoneType: string;
 }
 
 export const RDF_PREFIXES: RDFPrefixes = {
@@ -177,7 +174,7 @@ export const MLIT_PREDICATES: MLITPredicates = {
   impactRadius: `${RDF_PREFIXES.mlit}impactRadius`,
   priorityScore: `${RDF_PREFIXES.mlit}priorityScore`,
   // Flood hazard predicates
-  hasFloodHazardData: `${RDF_PREFIXES.mlit}hasFloodHazardData`,
+  hazardType: `${RDF_PREFIXES.mlit}hazardType`,
   floodDepthRank: `${RDF_PREFIXES.mlit}floodDepthRank`,
   floodDurationRank: `${RDF_PREFIXES.mlit}floodDurationRank`,
   hazardZoneType: `${RDF_PREFIXES.mlit}hazardZoneType`,
@@ -194,9 +191,6 @@ export const MLIT_CLASSES: MLITClasses = {
   DisasterEvent: `${RDF_PREFIXES.mlit}DisasterEvent`,
   SatelliteImagingArea: `${RDF_PREFIXES.mlit}SatelliteImagingArea`,
   FloodHazardZone: `${RDF_PREFIXES.mlit}FloodHazardZone`,
-  FloodDepthRank: `${RDF_PREFIXES.mlit}FloodDepthRank`,
-  FloodDurationRank: `${RDF_PREFIXES.mlit}FloodDurationRank`,
-  HazardZoneType: `${RDF_PREFIXES.mlit}HazardZoneType`,
 } as const;
 
 export const WGS84_CRS_URI = '<http://www.opengis.net/def/crs/OGC/1.3/CRS84>';
@@ -266,46 +260,44 @@ export function generateFloodHazardZoneIRI(
   hazardType: string,
   featureIndex?: number
 ): string {
-  const suffix = featureIndex !== undefined ? 
-    `${riverId}_${hazardType}_${featureIndex}` : 
-    `${riverId}_${hazardType}`;
+  const suffix =
+    featureIndex !== undefined
+      ? `${riverId}_${hazardType}_${featureIndex}`
+      : `${riverId}_${hazardType}`;
   return `${baseUri}floodhazard/${suffix}`;
 }
 
 /**
  * Generate a unique IRI for a river
  */
-export function generateRiverIRI(
-  baseUri: string,
-  riverId: string
-): string {
+export function generateRiverIRI(baseUri: string, riverId: string): string {
   return `${baseUri}river/${riverId}`;
 }
 
 // Flood depth rank mappings
 export const FLOOD_DEPTH_RANKS = {
-  1: { min: 0.0, max: 0.5, description: "0m以上0.5m未満" },
-  2: { min: 0.5, max: 3.0, description: "0.5m以上3.0m未満" },
-  3: { min: 3.0, max: 5.0, description: "3.0m以上5.0m未満" },
-  4: { min: 5.0, max: 10.0, description: "5.0m以上10.0m未満" },
-  5: { min: 10.0, max: 20.0, description: "10.0m以上20.0m未満" },
-  6: { min: 20.0, max: Infinity, description: "20.0m以上" },
+  1: { min: 0.0, max: 0.5, description: '0m以上0.5m未満' },
+  2: { min: 0.5, max: 3.0, description: '0.5m以上3.0m未満' },
+  3: { min: 3.0, max: 5.0, description: '3.0m以上5.0m未満' },
+  4: { min: 5.0, max: 10.0, description: '5.0m以上10.0m未満' },
+  5: { min: 10.0, max: 20.0, description: '10.0m以上20.0m未満' },
+  6: { min: 20.0, max: Infinity, description: '20.0m以上' },
 } as const;
 
-// Flood duration rank mappings  
+// Flood duration rank mappings
 export const FLOOD_DURATION_RANKS = {
-  1: { hours: 12, description: "12時間未満" },
-  2: { hours: 24, description: "12時間以上24時間未満（1日間）" },
-  3: { hours: 72, description: "24時間以上72時間未満（3日間）" },
-  4: { hours: 168, description: "72時間以上168時間未満（1週間）" },
-  5: { hours: 336, description: "168時間以上336時間未満（2週間）" },
-  6: { hours: 672, description: "336時間以上672時間未満（4週間）" },
-  7: { hours: Infinity, description: "672時間以上（4週間以上）" },
+  1: { hours: 12, description: '12時間未満' },
+  2: { hours: 24, description: '12時間以上24時間未満（1日間）' },
+  3: { hours: 72, description: '24時間以上72時間未満（3日間）' },
+  4: { hours: 168, description: '72時間以上168時間未満（1週間）' },
+  5: { hours: 336, description: '168時間以上336時間未満（2週間）' },
+  6: { hours: 672, description: '336時間以上672時間未満（4週間）' },
+  7: { hours: Infinity, description: '672時間以上（4週間以上）' },
 } as const;
 
 // Hazard zone type mappings
 export const HAZARD_ZONE_TYPES = {
-  1: { type: "overflow", description: "氾濫流" },
-  2: { type: "erosion", description: "河岸浸食" },
-  3: { type: "both", description: "どちらも該当" },
+  1: { type: 'overflow', description: '氾濫流' },
+  2: { type: 'erosion', description: '河岸浸食' },
+  3: { type: 'both', description: 'どちらも該当' },
 } as const;
