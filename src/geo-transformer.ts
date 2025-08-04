@@ -29,6 +29,7 @@ export interface TransformerOptions {
   includePopulationSnapshots?: boolean;
   currentFilePath?: string;
   minFloodDepthRank?: number;
+  useMinimalFloodProperties?: boolean;
 }
 
 export interface RDFTriple {
@@ -207,50 +208,33 @@ export class GeoSPARQLTransformer {
       )
     );
 
-    // Create river entity if not exists
+    // Add geometry center point for search performance
+    const centerPoint = this.calculateGeometryCenter(feature.geometry);
+    const centerIRI = `${geometryIRI}_center`;
     triples.push(
       this.createTriple(
-        riverIRI,
+        centerIRI,
         `${RDF_PREFIXES.rdf}type`,
-        `${MLIT_CLASSES.AdministrativeArea}`
+        `${RDF_PREFIXES.geo}Geometry`
+      ),
+      this.createTriple(
+        centerIRI,
+        `${RDF_PREFIXES.geo}asWKT`,
+        this.createWKTLiteral(centerPoint)
       ),
       this.createTriple(
         hazardZoneIRI,
-        MLIT_PREDICATES.riverId,
-        this.createStringLiteral(riverId)
+        `${MLIT_PREDICATES.hazardType}_center`,
+        centerIRI
       )
     );
 
-    if (riverName) {
-      triples.push(
-        this.createTriple(
-          riverIRI,
-          MLIT_PREDICATES.riverName,
-          this.createStringLiteral(riverName)
-        ),
-        this.createTriple(
-          hazardZoneIRI,
-          MLIT_PREDICATES.riverName,
-          this.createStringLiteral(riverName)
-        )
-      );
+    // Use minimal or full properties based on configuration
+    if (this.options.useMinimalFloodProperties) {
+      this.addMinimalFloodProperties(triples, hazardZoneIRI, hazardType, rankCode);
+    } else {
+      this.addFullFloodProperties(triples, hazardZoneIRI, riverIRI, riverId, riverName, hazardType, rankCode);
     }
-
-    // Prefecture data removed for data size reduction
-
-    // Add hazard-specific data based on type
-    if (rankCode !== null && rankCode !== undefined) {
-      this.addHazardSpecificData(triples, hazardZoneIRI, hazardType, rankCode);
-    }
-
-    // Add hazard type
-    triples.push(
-      this.createTriple(
-        hazardZoneIRI,
-        MLIT_PREDICATES.hazardType,
-        this.createStringLiteral(hazardType)
-      )
-    );
 
     return {
       triples,
@@ -855,6 +839,126 @@ export class GeoSPARQLTransformer {
 
     // No filtering for other hazard types
     return false;
+  }
+
+  /**
+   * Calculate geometry center point as WKT POINT
+   */
+  private calculateGeometryCenter(geometry: any): string {
+    try {
+      if (geometry.type === 'Polygon' && geometry.coordinates && geometry.coordinates[0]) {
+        const coordinates = geometry.coordinates[0];
+        let sumLng = 0;
+        let sumLat = 0;
+        const pointCount = coordinates.length - 1; // Exclude closing point
+        
+        for (let i = 0; i < pointCount; i++) {
+          sumLng += coordinates[i][0];
+          sumLat += coordinates[i][1];
+        }
+        
+        const centerLng = sumLng / pointCount;
+        const centerLat = sumLat / pointCount;
+        
+        // Transform center point from JGD2011 to WGS84
+        const transformedCenter = proj4('JGD2011', 'WGS84', [centerLng, centerLat]);
+        
+        return `POINT(${transformedCenter[0]} ${transformedCenter[1]})`;
+      }
+      
+      // Fallback for other geometry types
+      return 'POINT(0 0)';
+    } catch (error) {
+      this.logger?.error('Error calculating geometry center:', error);
+      return 'POINT(0 0)';
+    }
+  }
+
+  /**
+   * Add minimal flood hazard properties for performance optimization
+   */
+  private addMinimalFloodProperties(
+    triples: RDFTriple[],
+    hazardZoneIRI: string,
+    hazardType: string,
+    rankCode: number
+  ): void {
+    // Essential properties only: hazard type and rank
+    triples.push(
+      this.createTriple(
+        hazardZoneIRI,
+        MLIT_PREDICATES.hazardType,
+        this.createStringLiteral(hazardType)
+      )
+    );
+
+    if (rankCode !== null && rankCode !== undefined) {
+      triples.push(
+        this.createTriple(
+          hazardZoneIRI,
+          MLIT_PREDICATES.floodDepthRank,
+          this.createIntegerLiteral(rankCode)
+        )
+      );
+    }
+    
+    // No river information, detailed descriptions, or other metadata to reduce triple count
+  }
+
+  /**
+   * Add full flood hazard properties (legacy behavior)
+   */
+  private addFullFloodProperties(
+    triples: RDFTriple[],
+    hazardZoneIRI: string,
+    riverIRI: string,
+    riverId: string,
+    riverName: string | undefined,
+    hazardType: string,
+    rankCode: number
+  ): void {
+    // Create river entity
+    triples.push(
+      this.createTriple(
+        riverIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${MLIT_CLASSES.AdministrativeArea}`
+      ),
+      this.createTriple(
+        hazardZoneIRI,
+        MLIT_PREDICATES.riverId,
+        this.createStringLiteral(riverId)
+      )
+    );
+
+    if (riverName) {
+      triples.push(
+        this.createTriple(
+          riverIRI,
+          MLIT_PREDICATES.riverName,
+          this.createStringLiteral(riverName)
+        ),
+        this.createTriple(
+          hazardZoneIRI,
+          MLIT_PREDICATES.riverName,
+          this.createStringLiteral(riverName)
+        )
+      );
+    }
+
+    // Add hazard-specific data based on type
+    if (rankCode !== null && rankCode !== undefined) {
+      this.addHazardSpecificData(triples, hazardZoneIRI, hazardType, rankCode);
+    }
+
+    // Add hazard type
+    triples.push(
+      this.createTriple(
+        hazardZoneIRI,
+        MLIT_PREDICATES.hazardType,
+        this.createStringLiteral(hazardType)
+      )
+    );
   }
 }
 
