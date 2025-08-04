@@ -224,16 +224,29 @@ export class GeoSPARQLTransformer {
       ),
       this.createTriple(
         hazardZoneIRI,
-        `${MLIT_PREDICATES.hazardType}_center`,
+        `${RDF_PREFIXES.geo}hasCentroid`,
         centerIRI
       )
     );
 
     // Use minimal or full properties based on configuration
     if (this.options.useMinimalFloodProperties) {
-      this.addMinimalFloodProperties(triples, hazardZoneIRI, hazardType, rankCode);
+      this.addMinimalFloodProperties(
+        triples,
+        hazardZoneIRI,
+        hazardType,
+        rankCode
+      );
     } else {
-      this.addFullFloodProperties(triples, hazardZoneIRI, riverIRI, riverId, riverName, hazardType, rankCode);
+      this.addFullFloodProperties(
+        triples,
+        hazardZoneIRI,
+        riverIRI,
+        riverId,
+        riverName,
+        hazardType,
+        rankCode
+      );
     }
 
     return {
@@ -846,26 +859,33 @@ export class GeoSPARQLTransformer {
    */
   private calculateGeometryCenter(geometry: any): string {
     try {
-      if (geometry.type === 'Polygon' && geometry.coordinates && geometry.coordinates[0]) {
+      if (
+        geometry.type === 'Polygon' &&
+        geometry.coordinates &&
+        geometry.coordinates[0]
+      ) {
         const coordinates = geometry.coordinates[0];
         let sumLng = 0;
         let sumLat = 0;
         const pointCount = coordinates.length - 1; // Exclude closing point
-        
+
         for (let i = 0; i < pointCount; i++) {
           sumLng += coordinates[i][0];
           sumLat += coordinates[i][1];
         }
-        
+
         const centerLng = sumLng / pointCount;
         const centerLat = sumLat / pointCount;
-        
+
         // Transform center point from JGD2011 to WGS84
-        const transformedCenter = proj4('JGD2011', 'WGS84', [centerLng, centerLat]);
-        
+        const transformedCenter = proj4('JGD2011', 'WGS84', [
+          centerLng,
+          centerLat,
+        ]);
+
         return `POINT(${transformedCenter[0]} ${transformedCenter[1]})`;
       }
-      
+
       // Fallback for other geometry types
       return 'POINT(0 0)';
     } catch (error) {
@@ -891,8 +911,11 @@ export class GeoSPARQLTransformer {
         this.createStringLiteral(hazardType)
       )
     );
-
-    if (rankCode !== null && rankCode !== undefined) {
+    if (
+      hazardType === 'planned_scale_depth' ||
+      hazardType === 'maximum_assumed_depth'
+    ) {
+      // Flood depth data
       triples.push(
         this.createTriple(
           hazardZoneIRI,
@@ -900,8 +923,33 @@ export class GeoSPARQLTransformer {
           this.createIntegerLiteral(rankCode)
         )
       );
+    } else if (hazardType === 'flood_duration') {
+      // Flood duration data
+      triples.push(
+        this.createTriple(
+          hazardZoneIRI,
+          MLIT_PREDICATES.floodDurationRank,
+          this.createIntegerLiteral(rankCode)
+        )
+      );
+    } else if (
+      hazardType === 'overflow_collapse_zone' ||
+      hazardType === 'erosion_collapse_zone'
+    ) {
+      // Hazard zone type data
+      const zoneInfo =
+        HAZARD_ZONE_TYPES[rankCode as keyof typeof HAZARD_ZONE_TYPES];
+      if (zoneInfo) {
+        triples.push(
+          this.createTriple(
+            hazardZoneIRI,
+            MLIT_PREDICATES.hazardZoneType,
+            this.createStringLiteral(zoneInfo.type)
+          )
+        );
+      }
     }
-    
+
     // No river information, detailed descriptions, or other metadata to reduce triple count
   }
 

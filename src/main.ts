@@ -214,6 +214,7 @@ class MLITGeoJSONToRDF4J {
       includePopulationSnapshots: this.options.includePopulationSnapshots,
       logger: this.logger,
       currentFilePath,
+      useMinimalFloodProperties: true,
     });
   }
 
