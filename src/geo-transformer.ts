@@ -30,6 +30,7 @@ export interface TransformerOptions {
   currentFilePath?: string;
   minFloodDepthRank?: number;
   useMinimalFloodProperties?: boolean;
+  aggregateFloodZonesByRank?: boolean;
 }
 
 export interface RDFTriple {
@@ -45,6 +46,14 @@ export interface TransformationResult {
   populationSnapshotIRIs: string[];
   landUseIRIs: string[];
   floodHazardZoneIRIs: string[];
+}
+
+export interface AggregatedFloodZone {
+  riverId: string;
+  riverName?: string;
+  hazardType: string;
+  rankCode: number;
+  polygons: any[]; // GeoJSON Polygon geometries
 }
 
 /**
@@ -85,6 +94,36 @@ export class GeoSPARQLTransformer {
 
     // Default to population/land use data transformation
     return this.transformPopulationLandUseFeature(feature);
+  }
+
+  /**
+   * Transform multiple flood hazard features with aggregation by rank
+   */
+  public transformFloodHazardFeatures(features: GeoJSONFeature[]): TransformationResult {
+    if (!this.options.aggregateFloodZonesByRank) {
+      // Fallback to individual feature transformation
+      const allTriples: RDFTriple[] = [];
+      const allFloodHazardZoneIRIs: string[] = [];
+      
+      for (const feature of features) {
+        const result = this.transformFloodHazardFeature(feature);
+        allTriples.push(...result.triples);
+        allFloodHazardZoneIRIs.push(...result.floodHazardZoneIRIs);
+      }
+      
+      return {
+        triples: allTriples,
+        featureIRI: '',
+        geometryIRI: '',
+        populationSnapshotIRIs: [],
+        landUseIRIs: [],
+        floodHazardZoneIRIs: allFloodHazardZoneIRIs,
+      };
+    }
+
+    // Aggregate features by river, hazard type, and rank
+    const aggregatedZones = this.aggregateFloodZonesByRank(features);
+    return this.transformAggregatedFloodZones(aggregatedZones);
   }
 
   /**
@@ -1007,6 +1046,201 @@ export class GeoSPARQLTransformer {
         this.createStringLiteral(hazardType)
       )
     );
+  }
+
+  /**
+   * Aggregate flood zones by river, hazard type, and rank
+   */
+  private aggregateFloodZonesByRank(features: GeoJSONFeature[]): AggregatedFloodZone[] {
+    const aggregationMap = new Map<string, AggregatedFloodZone>();
+
+    for (const feature of features) {
+      if (!this.isFloodHazardData(feature)) continue;
+
+      const props = feature.properties;
+      const hazardType = this.determineHazardType(feature);
+      const propertyMappings = this.getPropertyMappings(hazardType);
+      
+      const riverId = props[propertyMappings.riverIdProp];
+      const riverName = props[propertyMappings.riverNameProp];
+      const rankCode = props[propertyMappings.rangeProp];
+
+      if (!riverId || this.shouldSkipLowRankFeature(hazardType, rankCode)) {
+        continue;
+      }
+
+      // Create aggregation key: riverId_hazardType_rankCode
+      const key = `${riverId}_${hazardType}_${rankCode}`;
+      
+      if (!aggregationMap.has(key)) {
+        aggregationMap.set(key, {
+          riverId,
+          riverName,
+          hazardType,
+          rankCode,
+          polygons: []
+        });
+      }
+
+      // Add polygon to aggregation
+      const aggregated = aggregationMap.get(key)!;
+      if (feature.geometry.type === 'Polygon') {
+        aggregated.polygons.push(feature.geometry);
+      }
+    }
+
+    return Array.from(aggregationMap.values());
+  }
+
+  /**
+   * Transform aggregated flood zones to RDF triples
+   */
+  private transformAggregatedFloodZones(aggregatedZones: AggregatedFloodZone[]): TransformationResult {
+    const { baseUri } = this.options;
+    const triples: RDFTriple[] = [];
+    const floodHazardZoneIRIs: string[] = [];
+
+    for (const zone of aggregatedZones) {
+      if (zone.polygons.length === 0) continue;
+
+      // Create MultiPolygon geometry
+      const multiPolygonGeometry = {
+        type: 'MultiPolygon',
+        coordinates: zone.polygons.map(polygon => polygon.coordinates)
+      };
+
+      // Generate unique IRI for aggregated zone
+      const aggregatedZoneIRI = generateFloodHazardZoneIRI(
+        baseUri,
+        `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}`,
+        zone.hazardType
+      );
+      const geometryIRI = `${aggregatedZoneIRI}_geom`;
+      const boundingBoxIRI = `${aggregatedZoneIRI}_bbox`;
+      
+      floodHazardZoneIRIs.push(aggregatedZoneIRI);
+
+      // Add type declarations
+      triples.push(
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${RDF_PREFIXES.rdf}type`,
+          `${RDF_PREFIXES.geo}Feature`
+        ),
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${RDF_PREFIXES.rdf}type`,
+          MLIT_CLASSES.FloodHazardZone
+        ),
+        this.createTriple(
+          geometryIRI,
+          `${RDF_PREFIXES.rdf}type`,
+          `${RDF_PREFIXES.geo}Geometry`
+        ),
+        this.createTriple(
+          boundingBoxIRI,
+          `${RDF_PREFIXES.rdf}type`,
+          `${RDF_PREFIXES.geo}Geometry`
+        )
+      );
+
+      // Link zone to geometries
+      triples.push(
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${RDF_PREFIXES.geo}hasGeometry`,
+          geometryIRI
+        ),
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${RDF_PREFIXES.geo}hasBoundingBox`, 
+          boundingBoxIRI
+        )
+      );
+
+      // Transform and add MultiPolygon geometry
+      const wktMultiPolygon = this.transformGeometry(multiPolygonGeometry);
+      triples.push(
+        this.createTriple(
+          geometryIRI,
+          `${RDF_PREFIXES.geo}asWKT`,
+          this.createWKTLiteral(wktMultiPolygon)
+        )
+      );
+
+      // Calculate and add bounding box
+      const boundingBox = this.calculateBoundingBox(zone.polygons);
+      triples.push(
+        this.createTriple(
+          boundingBoxIRI,
+          `${RDF_PREFIXES.geo}asWKT`,
+          this.createWKTLiteral(boundingBox)
+        )
+      );
+
+      // Add properties based on configuration
+      if (this.options.useMinimalFloodProperties) {
+        this.addMinimalFloodProperties(triples, aggregatedZoneIRI, zone.hazardType, zone.rankCode);
+      } else {
+        const riverIRI = generateRiverIRI(baseUri, zone.riverId);
+        this.addFullFloodProperties(
+          triples, 
+          aggregatedZoneIRI, 
+          riverIRI, 
+          zone.riverId, 
+          zone.riverName, 
+          zone.hazardType, 
+          zone.rankCode
+        );
+      }
+
+      // Add aggregation metadata
+      triples.push(
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${MLIT_PREDICATES.hazardType}_polygonCount`,
+          this.createIntegerLiteral(zone.polygons.length)
+        )
+      );
+    }
+
+    return {
+      triples,
+      featureIRI: '',
+      geometryIRI: '',
+      populationSnapshotIRIs: [],
+      landUseIRIs: [],
+      floodHazardZoneIRIs,
+    };
+  }
+
+  /**
+   * Calculate bounding box for multiple polygons
+   */
+  private calculateBoundingBox(polygons: any[]): string {
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+
+    for (const polygon of polygons) {
+      if (polygon.coordinates && polygon.coordinates[0]) {
+        for (const coordinate of polygon.coordinates[0]) {
+          const [lng, lat] = coordinate;
+          minLng = Math.min(minLng, lng);
+          maxLng = Math.max(maxLng, lng);
+          minLat = Math.min(minLat, lat);
+          maxLat = Math.max(maxLat, lat);
+        }
+      }
+    }
+
+    // Transform bounding box coordinates from JGD2011 to WGS84
+    const transformedMin = proj4('JGD2011', 'WGS84', [minLng, minLat]);
+    const transformedMax = proj4('JGD2011', 'WGS84', [maxLng, maxLat]);
+
+    // Create bounding box as POLYGON
+    return `POLYGON((${transformedMin[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMin[1]}))`;
   }
 }
 
