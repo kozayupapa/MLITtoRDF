@@ -1,0 +1,22 @@
+# example to filter --aggregateByRank true
+PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX mlit: <http://example.org/mlit/ontology#>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?hazardZone ?hazardType  ?depthRank  ?wkt ?wktB
+WHERE {
+    ?hazardZone rdf:type mlit:FloodHazardZone ;
+                mlit:hazardType ?hazardType ;
+                mlit:floodDepthRank ?depthRank ;
+                geo:hasBoundingBox ?geomB ;
+                geo:hasGeometry ?geom .
+    ?geom geo:asWKT ?wkt .
+    ?geomB geo:asWKT ?wktB .
+    FILTER(geof:sfWithin("POLYGON((136.0 36.1, 137.4 36.1, 137.4 37.6, 136.0 37.6, 136.0 36.1))"^^geo:wktLiteral, ?wkt))
+
+}
+ORDER BY DESC(?depthRank)
+LIMIT 100

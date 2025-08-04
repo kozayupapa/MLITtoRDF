@@ -29,6 +29,8 @@ interface CLIOptions {
   dryRun: boolean;
   includePopulationSnapshots: boolean;
   dataType: 'population-geojson' | 'landuse-geojson' | 'flood-geojson' | 'auto';
+  aggregateByRank: boolean;
+  minFloodDepthRank: number;
 }
 
 /**
@@ -215,6 +217,8 @@ class MLITGeoJSONToRDF4J {
       logger: this.logger,
       currentFilePath,
       useMinimalFloodProperties: true,
+      aggregateFloodZonesByRank: this.options.aggregateByRank,
+      minFloodDepthRank: this.options.minFloodDepthRank,
     });
   }
 
@@ -347,11 +351,6 @@ class MLITGeoJSONToRDF4J {
     uploadTime: number;
     errors: string[];
   }> {
-    let processedFeatures = 0;
-    let transformationErrors = 0;
-    let uploadedTriples = 0;
-    let batches = 0;
-    let uploadTime = 0;
     const errors: string[] = [];
 
     try {
@@ -384,6 +383,98 @@ class MLITGeoJSONToRDF4J {
         };
       }
 
+      // Transform features in this batch using abstracted processing
+      const result = this.processFeatures(
+        parsedFeatures,
+        transformer,
+        filePath,
+        loader,
+        globalFeatureOffset
+      );
+      return result;
+    } catch (error) {
+      const errorMsg = `Error processing file ${filePath}: ${error}`;
+      this.logger.error(errorMsg);
+      errors.push(errorMsg);
+      return {
+        processedFeatures: 0,
+        transformationErrors: 0,
+        uploadedTriples: 0,
+        batches: 0,
+        uploadTime: 0,
+        errors,
+      };
+    }
+  }
+
+  /**
+   * Utility function to split array into chunks
+   */
+  /**
+   * Abstracted feature batch processing with data type branching
+   */
+  private async processFeatures(
+    parsedFeatures: any[],
+    transformer: GeoSPARQLTransformer,
+    filePath: string,
+    loader: RDF4JBulkLoader,
+    globalFeatureOffset: number
+  ): Promise<{
+    processedFeatures: number;
+    transformationErrors: number;
+    uploadedTriples: number;
+    batches: number;
+    uploadTime: number;
+    errors: string[];
+  }> {
+    const triples: RDFTriple[] = [];
+    let processedCount = 0;
+    let errorCount = 0;
+    let processedFeatures = 0;
+    let transformationErrors = 0;
+    let uploadedTriples = 0;
+    let batches = 0;
+    let uploadTime = 0;
+    const errors: string[] = [];
+
+    // Determine processing mode based on data type and options
+    if (this.shouldUseAggregatedProcessing(parsedFeatures)) {
+      // Use aggregated processing for flood hazard data
+      const features = parsedFeatures.map((data) => data.feature);
+      const result = transformer.transformFeatures(features);
+      triples.push(...result.triples);
+      processedFeatures = parsedFeatures.length;
+      batches = 1;
+      this.logger.info(
+        `Aggregated ${parsedFeatures.length} flood hazard features into ${result.floodHazardZoneIRIs.length} zones`
+      );
+
+      // Continue proces        // Upload this batch to RDF4J if we have triples
+      if (triples.length > 0 && !this.options.dryRun) {
+        try {
+          const startTime = Date.now();
+          await loader.loadTriples(triples);
+          const batchTime = Date.now() - startTime;
+
+          uploadedTriples += triples.length;
+          uploadTime += batchTime;
+
+          this.logger.info(
+            `Uploaded aggregated: ${triples.length} triples in ${batchTime}ms`
+          );
+        } catch (error) {
+          const errorMsg = `Failed to upload aggregated from ${filePath}: ${error}`;
+          this.logger.error(errorMsg);
+          transformationErrors++;
+          errors.push(errorMsg);
+        }
+      } else if (triples.length > 0 && this.options.dryRun) {
+        uploadedTriples += triples.length;
+        this.logger.info(
+          `Dry run: would upload aggregated ${triples.length} triples`
+        );
+      }
+    } else {
       // Process features in smaller batches to control memory usage
       const batchSize = Math.min(this.options.batchSize, 500); // Limit batch size for memory
       const featureBatches = this.chunkArray(parsedFeatures, batchSize);
@@ -402,36 +493,46 @@ class MLITGeoJSONToRDF4J {
           } features) from ${filePath}`
         );
 
-        // Transform features in this batch
+        // Use individual feature processing (legacy mode)
         for (const data of featureBatch) {
           try {
             const result: TransformationResult = transformer.transformFeature(
               data.feature
             );
-            batchTriples.push(...result.triples);
-            processedFeatures++;
-
-            // Log progress periodically
-            if ((globalFeatureOffset + processedFeatures) % 1000 === 0) {
-              this.logger.info(
-                `Transformed ${
-                  globalFeatureOffset + processedFeatures
-                } total features`
-              );
-            }
+            triples.push(...result.triples);
+            processedCount++;
           } catch (error) {
-            transformationErrors++;
+            errorCount++;
             const errorMsg = `Failed to transform feature ${data.featureIndex} from file ${data.filePath}: ${error}`;
             this.logger.error(errorMsg);
             errors.push(errorMsg);
-
-            // Continue processing unless too many errors
-            if (transformationErrors > 100) {
-              throw new Error(
-                `Too many transformation errors (${transformationErrors}), aborting file ${filePath}`
-              );
-            }
           }
+        }
+        const batchResult = {
+          triples,
+          processedCount,
+          errorCount,
+          errors,
+        };
+        batchTriples.push(...batchResult.triples);
+        processedFeatures += batchResult.processedCount;
+        transformationErrors += batchResult.errorCount;
+        errors.push(...batchResult.errors);
+
+        // Log progress periodically
+        if ((globalFeatureOffset + processedFeatures) % 1000 === 0) {
+          this.logger.info(
+            `Transformed ${
+              globalFeatureOffset + processedFeatures
+            } total features`
+          );
+        }
+
+        // Continue processing unless too many errors
+        if (transformationErrors > 100) {
+          throw new Error(
+            `Too many transformation errors (${transformationErrors}), aborting file ${filePath}`
+          );
         }
 
         // Upload this batch to RDF4J if we have triples
@@ -467,10 +568,6 @@ class MLITGeoJSONToRDF4J {
         // Clear batch data to free memory
         batchTriples.length = 0;
       }
-    } catch (error) {
-      const errorMsg = `Error processing file ${filePath}: ${error}`;
-      this.logger.error(errorMsg);
-      errors.push(errorMsg);
     }
 
     return {
@@ -484,8 +581,17 @@ class MLITGeoJSONToRDF4J {
   }
 
   /**
-   * Utility function to split array into chunks
+   * Determine if aggregated processing should be used
    */
+  private shouldUseAggregatedProcessing(featureBatch: any[]): boolean {
+    // Check if batch contains flood hazard data
+    if (featureBatch.length === 0) {
+      return false;
+    }
+
+    return this.options.aggregateByRank;
+  }
+
   private chunkArray<T>(array: T[], chunkSize: number): T[][] {
     const chunks: T[][] = [];
     for (let i = 0; i < array.length; i += chunkSize) {
@@ -615,6 +721,16 @@ async function main(): Promise<void> {
       '--includePopulationSnapshots',
       'Include detailed population snapshot data',
       true
+    )
+    .option(
+      '--aggregateByRank',
+      'Aggregate flood hazard zones by rank (reduces record count significantly)',
+      false
+    )
+    .option(
+      '--minFloodDepthRank <rank>',
+      'Minimum flood depth rank to include (for data reduction)',
+      '2'
     );
 
   program.parse();
@@ -623,6 +739,7 @@ async function main(): Promise<void> {
 
   // Parse numeric options
   options.batchSize = parseInt(options.batchSize.toString());
+  options.minFloodDepthRank = parseInt(options.minFloodDepthRank.toString());
   if (options.maxFeatures) {
     options.maxFeatures = parseInt(options.maxFeatures.toString());
   }
@@ -647,13 +764,24 @@ async function main(): Promise<void> {
   }
 
   // Validate data type
-  const validDataTypes = ['population-geojson', 'landuse-geojson', 'auto'];
+  const validDataTypes = [
+    'population-geojson',
+    'landuse-geojson',
+    'flood-geojson',
+    'auto',
+  ];
   if (!validDataTypes.includes(options.dataType)) {
     console.error(
       `Invalid data type: ${
         options.dataType
       }. Must be one of: ${validDataTypes.join(', ')}`
     );
+    process.exit(1);
+  }
+
+  // Validate flood depth rank
+  if (options.minFloodDepthRank < 1 || options.minFloodDepthRank > 10) {
+    console.error('Minimum flood depth rank must be between 1 and 10');
     process.exit(1);
   }
 

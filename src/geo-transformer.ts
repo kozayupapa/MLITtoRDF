@@ -97,33 +97,89 @@ export class GeoSPARQLTransformer {
   }
 
   /**
+   * Transform features with intelligent processing mode selection
+   */
+  public transformFeatures(features: GeoJSONFeature[]): TransformationResult {
+    // Determine the data type from features
+    const dataType = this.determineDataType(features);
+    
+    if (dataType === 'flood-hazard' && this.options.aggregateFloodZonesByRank) {
+      // Use aggregated processing for flood hazard data
+      return this.transformFloodHazardFeatures(features);
+    } else {
+      // Use individual feature processing for other data types
+      return this.transformIndividualFeatures(features);
+    }
+  }
+
+  /**
    * Transform multiple flood hazard features with aggregation by rank
    */
   public transformFloodHazardFeatures(features: GeoJSONFeature[]): TransformationResult {
     if (!this.options.aggregateFloodZonesByRank) {
       // Fallback to individual feature transformation
-      const allTriples: RDFTriple[] = [];
-      const allFloodHazardZoneIRIs: string[] = [];
-      
-      for (const feature of features) {
-        const result = this.transformFloodHazardFeature(feature);
-        allTriples.push(...result.triples);
-        allFloodHazardZoneIRIs.push(...result.floodHazardZoneIRIs);
-      }
-      
-      return {
-        triples: allTriples,
-        featureIRI: '',
-        geometryIRI: '',
-        populationSnapshotIRIs: [],
-        landUseIRIs: [],
-        floodHazardZoneIRIs: allFloodHazardZoneIRIs,
-      };
+      return this.transformIndividualFeatures(features);
     }
 
     // Aggregate features by river, hazard type, and rank
     const aggregatedZones = this.aggregateFloodZonesByRank(features);
     return this.transformAggregatedFloodZones(aggregatedZones);
+  }
+
+  /**
+   * Transform features individually (legacy mode)
+   */
+  private transformIndividualFeatures(features: GeoJSONFeature[]): TransformationResult {
+    const allTriples: RDFTriple[] = [];
+    const allFloodHazardZoneIRIs: string[] = [];
+    const allPopulationSnapshotIRIs: string[] = [];
+    const allLandUseIRIs: string[] = [];
+    
+    for (const feature of features) {
+      const result = this.transformFeature(feature);
+      allTriples.push(...result.triples);
+      allFloodHazardZoneIRIs.push(...result.floodHazardZoneIRIs);
+      allPopulationSnapshotIRIs.push(...result.populationSnapshotIRIs);
+      allLandUseIRIs.push(...result.landUseIRIs);
+    }
+    
+    return {
+      triples: allTriples,
+      featureIRI: '',
+      geometryIRI: '',
+      populationSnapshotIRIs: allPopulationSnapshotIRIs,
+      landUseIRIs: allLandUseIRIs,
+      floodHazardZoneIRIs: allFloodHazardZoneIRIs,
+    };
+  }
+
+  /**
+   * Determine data type from features
+   */
+  private determineDataType(features: GeoJSONFeature[]): string {
+    if (features.length === 0) {
+      return 'unknown';
+    }
+
+    const firstFeature = features[0];
+    if (!firstFeature.properties) {
+      return 'unknown';
+    }
+
+    const props = firstFeature.properties;
+    
+    // Check for flood hazard properties
+    if (props.A31a_101 || props.A31a_201 || props.A31a_301 || props.A31a_401) {
+      return 'flood-hazard';
+    }
+    
+    // Check for land use properties
+    if (props.田 !== undefined || props.森林 !== undefined || props.メッシュ !== undefined) {
+      return 'land-use';
+    }
+    
+    // Default to population data
+    return 'population';
   }
 
   /**
