@@ -1119,8 +1119,8 @@ export class GeoSPARQLTransformer {
   private aggregateFloodZonesByRank(
     features: GeoJSONFeature[]
   ): AggregatedFloodZone[] {
-    const MAX_DISTANCE_LNG = 0.015; // about 5km distance limit
-    const MAX_DISTANCE_LAT = 0.01; // about 5km distance
+    const MAX_DISTANCE_LNG = 0.01; // about 3km distance limit
+    const MAX_DISTANCE_LAT = 0.005; // about 3km distance
     const preliminaryGroups = new Map<
       string,
       { features: GeoJSONFeature[]; centroids: [number, number][] }
