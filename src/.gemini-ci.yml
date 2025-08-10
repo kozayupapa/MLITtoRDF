@@ -1,0 +1,34 @@
+# Gemini Code Assist Configuration File for TypeScript/Node.js projects
+# This file configures how Gemini analyzes your code, runs tests, and collects coverage.
+
+version: 1
+
+# Optional: Define a name for your project.
+project_name: MLIDDataRDF
+
+# Define files and directories to include or exclude from analysis.
+files:
+  # Include all TypeScript source files for analysis.
+  include:
+    - 'src/**/*.ts'
+
+  # Exclude build artifacts, dependencies, and configuration files.
+  exclude:
+    - 'node_modules/**'
+    - 'dist/**'
+    - 'build/**'
+    - '.claude/**'
+
+# Configure how tests are run and how coverage is collected.
+test:
+  # The command to install dependencies and execute your tests.
+  # This assumes a 'test' script in your package.json that runs tests and generates coverage.
+  command: 'npm install && npm test'
+
+  # Configure code coverage reporting.
+  coverage:
+    # Most Node.js coverage tools (like Jest or nyc) can generate lcov reports.
+    reporters:
+      - lcov
+    # The standard path to the lcov report file.
+    path: 'coverage/lcov.info'
