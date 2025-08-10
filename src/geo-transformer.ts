@@ -54,6 +54,7 @@ export interface AggregatedFloodZone {
   hazardType: string;
   rankCode: number;
   polygons: any[]; // GeoJSON Polygon geometries
+  clusterId: number; // Spatial clustering ID for distance-based grouping
 }
 
 /**
@@ -102,7 +103,7 @@ export class GeoSPARQLTransformer {
   public transformFeatures(features: GeoJSONFeature[]): TransformationResult {
     // Determine the data type from features
     const dataType = this.determineDataType(features);
-    
+
     if (dataType === 'flood-hazard' && this.options.aggregateFloodZonesByRank) {
       // Use aggregated processing for flood hazard data
       return this.transformFloodHazardFeatures(features);
@@ -115,7 +116,9 @@ export class GeoSPARQLTransformer {
   /**
    * Transform multiple flood hazard features with aggregation by rank
    */
-  public transformFloodHazardFeatures(features: GeoJSONFeature[]): TransformationResult {
+  public transformFloodHazardFeatures(
+    features: GeoJSONFeature[]
+  ): TransformationResult {
     if (!this.options.aggregateFloodZonesByRank) {
       // Fallback to individual feature transformation
       return this.transformIndividualFeatures(features);
@@ -129,12 +132,14 @@ export class GeoSPARQLTransformer {
   /**
    * Transform features individually (legacy mode)
    */
-  private transformIndividualFeatures(features: GeoJSONFeature[]): TransformationResult {
+  private transformIndividualFeatures(
+    features: GeoJSONFeature[]
+  ): TransformationResult {
     const allTriples: RDFTriple[] = [];
     const allFloodHazardZoneIRIs: string[] = [];
     const allPopulationSnapshotIRIs: string[] = [];
     const allLandUseIRIs: string[] = [];
-    
+
     for (const feature of features) {
       const result = this.transformFeature(feature);
       allTriples.push(...result.triples);
@@ -142,7 +147,7 @@ export class GeoSPARQLTransformer {
       allPopulationSnapshotIRIs.push(...result.populationSnapshotIRIs);
       allLandUseIRIs.push(...result.landUseIRIs);
     }
-    
+
     return {
       triples: allTriples,
       featureIRI: '',
@@ -167,17 +172,21 @@ export class GeoSPARQLTransformer {
     }
 
     const props = firstFeature.properties;
-    
+
     // Check for flood hazard properties
     if (props.A31a_101 || props.A31a_201 || props.A31a_301 || props.A31a_401) {
       return 'flood-hazard';
     }
-    
+
     // Check for land use properties
-    if (props.田 !== undefined || props.森林 !== undefined || props.メッシュ !== undefined) {
+    if (
+      props.田 !== undefined ||
+      props.森林 !== undefined ||
+      props.メッシュ !== undefined
+    ) {
       return 'land-use';
     }
-    
+
     // Default to population data
     return 'population';
   }
@@ -1105,53 +1114,131 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Aggregate flood zones by river, hazard type, and rank
+   * Aggregate flood zones by river, hazard type, and rank with spatial clustering
    */
-  private aggregateFloodZonesByRank(features: GeoJSONFeature[]): AggregatedFloodZone[] {
-    const aggregationMap = new Map<string, AggregatedFloodZone>();
+  private aggregateFloodZonesByRank(
+    features: GeoJSONFeature[]
+  ): AggregatedFloodZone[] {
+    const MAX_DISTANCE_KM = 5; // 30km distance limit
+    const preliminaryGroups = new Map<
+      string,
+      { features: GeoJSONFeature[]; centroids: [number, number][] }
+    >();
 
+    // First pass: group by river/hazard/rank
     for (const feature of features) {
       if (!this.isFloodHazardData(feature)) continue;
 
       const props = feature.properties;
       const hazardType = this.determineHazardType(feature);
       const propertyMappings = this.getPropertyMappings(hazardType);
-      
+
       const riverId = props[propertyMappings.riverIdProp];
-      const riverName = props[propertyMappings.riverNameProp];
+      //const riverName = props[propertyMappings.riverNameProp];
       const rankCode = props[propertyMappings.rangeProp];
 
       if (!riverId || this.shouldSkipLowRankFeature(hazardType, rankCode)) {
         continue;
       }
 
-      // Create aggregation key: riverId_hazardType_rankCode
-      const key = `${riverId}_${hazardType}_${rankCode}`;
-      
-      if (!aggregationMap.has(key)) {
-        aggregationMap.set(key, {
-          riverId,
-          riverName,
-          hazardType,
-          rankCode,
-          polygons: []
-        });
+      const groupKey = `${riverId}__${hazardType}__${rankCode}`;
+
+      if (!preliminaryGroups.has(groupKey)) {
+        preliminaryGroups.set(groupKey, { features: [], centroids: [] });
       }
 
-      // Add polygon to aggregation
-      const aggregated = aggregationMap.get(key)!;
+      const group = preliminaryGroups.get(groupKey)!;
+      group.features.push(feature);
+
       if (feature.geometry.type === 'Polygon') {
-        aggregated.polygons.push(feature.geometry);
+        const centroid = this.getPolygonCentroid(feature.geometry);
+        group.centroids.push(centroid);
       }
     }
 
-    return Array.from(aggregationMap.values());
+    // Second pass: apply spatial clustering within each group
+    const finalAggregations: AggregatedFloodZone[] = [];
+
+    for (const [groupKey, group] of preliminaryGroups) {
+      const [riverId, hazardType, rankCode] = groupKey.split('__');
+      const riverName =
+        group.features[0]?.properties[
+          this.getPropertyMappings(hazardType).riverNameProp
+        ];
+
+      // Spatial clustering: group features that are within 30km of each other
+      const spatialClusters = this.createSpatialClusters(
+        group.features,
+        group.centroids,
+        MAX_DISTANCE_KM
+      );
+
+      for (let clusterId = 0; clusterId < spatialClusters.length; clusterId++) {
+        const clusterFeatures = spatialClusters[clusterId];
+        const polygons = clusterFeatures
+          .filter((f) => f.geometry.type === 'Polygon')
+          .map((f) => f.geometry);
+
+        if (polygons.length > 0) {
+          finalAggregations.push({
+            riverId,
+            riverName,
+            hazardType,
+            rankCode: parseInt(rankCode),
+            polygons,
+            clusterId,
+          });
+        }
+      }
+    }
+
+    return finalAggregations;
+  }
+
+  /**
+   * Create spatial clusters based on distance threshold
+   */
+  private createSpatialClusters(
+    features: GeoJSONFeature[],
+    centroids: [number, number][],
+    maxDistanceKm: number
+  ): GeoJSONFeature[][] {
+    if (features.length === 0) return [];
+    if (features.length === 1) return [features];
+
+    const clusters: GeoJSONFeature[][] = [];
+    const assigned = new Set<number>();
+
+    for (let i = 0; i < features.length; i++) {
+      if (assigned.has(i)) continue;
+
+      const cluster = [features[i]];
+      assigned.add(i);
+      const clusterCentroid = centroids[i];
+
+      // Find all features within maxDistance of this cluster
+      for (let j = i + 1; j < features.length; j++) {
+        if (assigned.has(j)) continue;
+
+        const distance = this.calculateDistance(clusterCentroid, centroids[j]);
+        if (distance <= maxDistanceKm) {
+          cluster.push(features[j]);
+          assigned.add(j);
+        }
+      }
+
+      clusters.push(cluster);
+    }
+
+    return clusters;
   }
 
   /**
    * Transform aggregated flood zones to RDF triples
    */
-  private transformAggregatedFloodZones(aggregatedZones: AggregatedFloodZone[]): TransformationResult {
+  private transformAggregatedFloodZones(
+    aggregatedZones: AggregatedFloodZone[]
+  ): TransformationResult {
     const { baseUri } = this.options;
     const triples: RDFTriple[] = [];
     const floodHazardZoneIRIs: string[] = [];
@@ -1162,18 +1249,18 @@ export class GeoSPARQLTransformer {
       // Create MultiPolygon geometry
       const multiPolygonGeometry = {
         type: 'MultiPolygon',
-        coordinates: zone.polygons.map(polygon => polygon.coordinates)
+        coordinates: zone.polygons.map((polygon) => polygon.coordinates),
       };
 
-      // Generate unique IRI for aggregated zone
+      // Generate unique IRI for aggregated zone with cluster ID
       const aggregatedZoneIRI = generateFloodHazardZoneIRI(
         baseUri,
-        `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}`,
+        `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}_cluster${zone.clusterId}`,
         zone.hazardType
       );
       const geometryIRI = `${aggregatedZoneIRI}_geom`;
       const boundingBoxIRI = `${aggregatedZoneIRI}_bbox`;
-      
+
       floodHazardZoneIRIs.push(aggregatedZoneIRI);
 
       // Add type declarations
@@ -1209,7 +1296,7 @@ export class GeoSPARQLTransformer {
         ),
         this.createTriple(
           aggregatedZoneIRI,
-          `${RDF_PREFIXES.geo}hasBoundingBox`, 
+          `${RDF_PREFIXES.geo}hasBoundingBox`,
           boundingBoxIRI
         )
       );
@@ -1236,16 +1323,21 @@ export class GeoSPARQLTransformer {
 
       // Add properties based on configuration
       if (this.options.useMinimalFloodProperties) {
-        this.addMinimalFloodProperties(triples, aggregatedZoneIRI, zone.hazardType, zone.rankCode);
+        this.addMinimalFloodProperties(
+          triples,
+          aggregatedZoneIRI,
+          zone.hazardType,
+          zone.rankCode
+        );
       } else {
         const riverIRI = generateRiverIRI(baseUri, zone.riverId);
         this.addFullFloodProperties(
-          triples, 
-          aggregatedZoneIRI, 
-          riverIRI, 
-          zone.riverId, 
-          zone.riverName, 
-          zone.hazardType, 
+          triples,
+          aggregatedZoneIRI,
+          riverIRI,
+          zone.riverId,
+          zone.riverName,
+          zone.hazardType,
           zone.rankCode
         );
       }
@@ -1256,6 +1348,11 @@ export class GeoSPARQLTransformer {
           aggregatedZoneIRI,
           `${MLIT_PREDICATES.hazardType}_polygonCount`,
           this.createIntegerLiteral(zone.polygons.length)
+        ),
+        this.createTriple(
+          aggregatedZoneIRI,
+          `${MLIT_PREDICATES.hazardType}_clusterId`,
+          this.createIntegerLiteral(zone.clusterId)
         )
       );
     }
@@ -1268,6 +1365,60 @@ export class GeoSPARQLTransformer {
       landUseIRIs: [],
       floodHazardZoneIRIs,
     };
+  }
+
+  /**
+   * Calculate distance between two geographic coordinates in kilometers
+   * Using Haversine formula
+   */
+  private calculateDistance(
+    coord1: [number, number],
+    coord2: [number, number]
+  ): number {
+    const [lng1, lat1] = coord1;
+    const [lng2, lat2] = coord2;
+
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = this.toRadians(lat2 - lat1);
+    const dLng = this.toRadians(lng2 - lng1);
+
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.toRadians(lat1)) *
+        Math.cos(this.toRadians(lat2)) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in kilometers
+  }
+
+  /**
+   * Convert degrees to radians
+   */
+  private toRadians(degrees: number): number {
+    return degrees * (Math.PI / 180);
+  }
+
+  /**
+   * Get centroid of a polygon
+   */
+  private getPolygonCentroid(polygon: any): [number, number] {
+    if (!polygon.coordinates || !polygon.coordinates[0]) {
+      return [0, 0];
+    }
+
+    const coordinates = polygon.coordinates[0];
+    let sumLng = 0;
+    let sumLat = 0;
+    const pointCount = coordinates.length - 1; // Exclude closing point
+
+    for (let i = 0; i < pointCount; i++) {
+      sumLng += coordinates[i][0];
+      sumLat += coordinates[i][1];
+    }
+
+    return [sumLng / pointCount, sumLat / pointCount];
   }
 
   /**
