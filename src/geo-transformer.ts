@@ -1119,7 +1119,8 @@ export class GeoSPARQLTransformer {
   private aggregateFloodZonesByRank(
     features: GeoJSONFeature[]
   ): AggregatedFloodZone[] {
-    const MAX_DISTANCE_KM = 5; // 30km distance limit
+    const MAX_DISTANCE_LNG = 0.015; // about 5km distance limit
+    const MAX_DISTANCE_LAT = 0.01; // about 5km distance
     const preliminaryGroups = new Map<
       string,
       { features: GeoJSONFeature[]; centroids: [number, number][] }
@@ -1170,7 +1171,8 @@ export class GeoSPARQLTransformer {
       const spatialClusters = this.createSpatialClusters(
         group.features,
         group.centroids,
-        MAX_DISTANCE_KM
+        MAX_DISTANCE_LNG,
+        MAX_DISTANCE_LAT
       );
 
       for (let clusterId = 0; clusterId < spatialClusters.length; clusterId++) {
@@ -1201,7 +1203,8 @@ export class GeoSPARQLTransformer {
   private createSpatialClusters(
     features: GeoJSONFeature[],
     centroids: [number, number][],
-    maxDistanceKm: number
+    maxDistanceLng: number,
+    maxDistanceLat: number
   ): GeoJSONFeature[][] {
     if (features.length === 0) return [];
     if (features.length === 1) return [features];
@@ -1220,8 +1223,9 @@ export class GeoSPARQLTransformer {
       for (let j = i + 1; j < features.length; j++) {
         if (assigned.has(j)) continue;
 
-        const distance = this.calculateDistance(clusterCentroid, centroids[j]);
-        if (distance <= maxDistanceKm) {
+        const diffLng = Math.abs(clusterCentroid[0] - centroids[j][0]);
+        const diffLat = Math.abs(clusterCentroid[1] - centroids[j][1]);
+        if (diffLng <= maxDistanceLng || diffLat <= maxDistanceLat) {
           cluster.push(features[j]);
           assigned.add(j);
         }
@@ -1370,7 +1374,6 @@ export class GeoSPARQLTransformer {
   /**
    * Calculate distance between two geographic coordinates in kilometers
    * Using Haversine formula
-   */
   private calculateDistance(
     coord1: [number, number],
     coord2: [number, number]
@@ -1392,13 +1395,14 @@ export class GeoSPARQLTransformer {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // Distance in kilometers
   }
+*/
 
   /**
    * Convert degrees to radians
-   */
-  private toRadians(degrees: number): number {
+    private toRadians(degrees: number): number {
     return degrees * (Math.PI / 180);
   }
+ */
 
   /**
    * Get centroid of a polygon
@@ -1408,17 +1412,8 @@ export class GeoSPARQLTransformer {
       return [0, 0];
     }
 
-    const coordinates = polygon.coordinates[0];
-    let sumLng = 0;
-    let sumLat = 0;
-    const pointCount = coordinates.length - 1; // Exclude closing point
-
-    for (let i = 0; i < pointCount; i++) {
-      sumLng += coordinates[i][0];
-      sumLat += coordinates[i][1];
-    }
-
-    return [sumLng / pointCount, sumLat / pointCount];
+    //to make simple use 1st polygon
+    return polygon.coordinates[0][0];
   }
 
   /**
