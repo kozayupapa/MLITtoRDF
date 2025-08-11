@@ -31,6 +31,7 @@ export interface TransformerOptions {
   minFloodDepthRank?: number;
   useMinimalFloodProperties?: boolean;
   aggregateFloodZonesByRank?: boolean;
+  splitLargePolygonFeature?: boolean; // Polygon分割オプション
 }
 
 export interface RDFTriple {
@@ -225,6 +226,43 @@ export class GeoSPARQLTransformer {
   public transformFloodHazardFeature(
     feature: GeoJSONFeature
   ): TransformationResult {
+    // --- Polygon分割ロジック追加 ---
+    if (
+      this.options.splitLargePolygonFeature &&
+      feature.geometry &&
+      feature.geometry.type === 'Polygon' &&
+      feature.geometry.coordinates &&
+      feature.geometry.coordinates[0] &&
+      feature.geometry.coordinates[0].length > 100 // 例: 100点以上なら分割
+    ) {
+      // 3クラスタに分割（必要に応じて調整）
+      const clusters = this.splitPolygonByKMeans(feature.geometry, 3);
+      const results: TransformationResult[] = clusters.map(
+        (clusterGeom, idx) => {
+          const clusterFeature = { ...feature, geometry: clusterGeom };
+          // clusterIdをuniqueIdに付与
+          const result = this.transformFloodHazardFeature(clusterFeature);
+          if (result.featureIRI) result.featureIRI += `_cluster${idx}`;
+          if (result.geometryIRI) result.geometryIRI += `_cluster${idx}`;
+          if (result.floodHazardZoneIRIs) {
+            result.floodHazardZoneIRIs = result.floodHazardZoneIRIs.map(
+              (iri) => iri + `_cluster${idx}`
+            );
+          }
+          return result;
+        }
+      );
+      return {
+        triples: results.flatMap((r) => r.triples),
+        featureIRI: '',
+        geometryIRI: '',
+        populationSnapshotIRIs: [],
+        landUseIRIs: [],
+        floodHazardZoneIRIs: results.flatMap((r) => r.floodHazardZoneIRIs),
+      };
+    }
+    // --- ここまで ---
+
     const { baseUri } = this.options;
     const triples: RDFTriple[] = [];
     const floodHazardZoneIRIs: string[] = [];
@@ -361,6 +399,73 @@ export class GeoSPARQLTransformer {
       landUseIRIs: [],
       floodHazardZoneIRIs,
     };
+  }
+
+  /**
+   * PolygonをK-meansクラスタリングで分割
+   */
+  private splitPolygonByKMeans(polygon: any, k: number): any[] {
+    const coords = polygon.coordinates[0].slice(0, -1); // 最後の点は重複なので除外
+    if (coords.length < k) return [polygon];
+
+    // 初期中心を等間隔で選ぶ
+    let centers = [];
+    for (let i = 0; i < k; i++) {
+      centers.push(coords[Math.floor((i * coords.length) / k)]);
+    }
+
+    let assignments = new Array(coords.length).fill(0);
+    let changed = true;
+    for (let iter = 0; iter < 10 && changed; iter++) {
+      changed = false;
+      // 割り当て
+      for (let i = 0; i < coords.length; i++) {
+        let minDist = Infinity,
+          minIdx = 0;
+        for (let j = 0; j < k; j++) {
+          const d = Math.hypot(
+            coords[i][0] - centers[j][0],
+            coords[i][1] - centers[j][1]
+          );
+          if (d < minDist) {
+            minDist = d;
+            minIdx = j;
+          }
+        }
+        if (assignments[i] !== minIdx) changed = true;
+        assignments[i] = minIdx;
+      }
+      // 中心更新
+      for (let j = 0; j < k; j++) {
+        const cluster = coords.filter(
+          (_: number[], i: number) => assignments[i] === j
+        );
+        if (cluster.length > 0) {
+          centers[j] = [
+            cluster.reduce((sum: number, c: number[]) => sum + c[0], 0) /
+              cluster.length,
+            cluster.reduce((sum: number, c: number[]) => sum + c[1], 0) /
+              cluster.length,
+          ];
+        }
+      }
+    }
+    // クラスタごとにPolygon生成
+    const clusters: any[] = [];
+    for (let j = 0; j < k; j++) {
+      const clusterCoords = coords.filter(
+        (_: number[], i: number) => assignments[i] === j
+      );
+      if (clusterCoords.length > 2) {
+        // 閉じる
+        clusterCoords.push(clusterCoords[0]);
+        clusters.push({
+          type: 'Polygon',
+          coordinates: [clusterCoords],
+        });
+      }
+    }
+    return clusters.length > 0 ? clusters : [polygon];
   }
 
   /**
