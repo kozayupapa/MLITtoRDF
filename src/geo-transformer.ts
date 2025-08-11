@@ -31,6 +31,10 @@ export interface TransformerOptions {
   minFloodDepthRank?: number;
   useMinimalFloodProperties?: boolean;
   aggregateFloodZonesByRank?: boolean;
+  enableClustering?: boolean;
+  maxClusterDistance?: number;
+  maxPolygonArea?: number;
+  gridSize?: number;
 }
 
 export interface RDFTriple {
@@ -55,6 +59,13 @@ export interface AggregatedFloodZone {
   rankCode: number;
   polygons: any[]; // GeoJSON Polygon geometries
   clusterId: number; // Spatial clustering ID for distance-based grouping
+}
+
+export interface SpatialCluster {
+  id: number;
+  centroid: [number, number];
+  features: GeoJSONFeature[];
+  totalArea: number;
 }
 
 /**
@@ -101,6 +112,12 @@ export class GeoSPARQLTransformer {
    * Transform features with intelligent processing mode selection
    */
   public transformFeatures(features: GeoJSONFeature[]): TransformationResult {
+    // Apply clustering if enabled
+    if (this.options.enableClustering) {
+      const clusters = this.clusterFeatures(features);
+      return this.transformClustersToFeatures(clusters);
+    }
+
     // Determine the data type from features
     const dataType = this.determineDataType(features);
 
@@ -111,6 +128,116 @@ export class GeoSPARQLTransformer {
       // Use individual feature processing for other data types
       return this.transformIndividualFeatures(features);
     }
+  }
+
+  /**
+   * Transform clustered features to RDF triples
+   */
+  private transformClustersToFeatures(clusters: SpatialCluster[]): TransformationResult {
+    const allTriples: RDFTriple[] = [];
+    const allFloodHazardZoneIRIs: string[] = [];
+    const allPopulationSnapshotIRIs: string[] = [];
+    const allLandUseIRIs: string[] = [];
+
+    this.logger.info(`Transforming ${clusters.length} clusters to RDF triples`);
+
+    for (const cluster of clusters) {
+      // Transform each cluster as a group of related features
+      for (const feature of cluster.features) {
+        const result = this.transformFeature(feature);
+        allTriples.push(...result.triples);
+        allFloodHazardZoneIRIs.push(...result.floodHazardZoneIRIs);
+        allPopulationSnapshotIRIs.push(...result.populationSnapshotIRIs);
+        allLandUseIRIs.push(...result.landUseIRIs);
+      }
+
+      // Add cluster metadata triples if needed
+      if (cluster.features.length > 1) {
+        const clusterTriples = this.createClusterMetadataTriples(cluster);
+        allTriples.push(...clusterTriples);
+      }
+    }
+
+    return {
+      triples: allTriples,
+      featureIRI: '',
+      geometryIRI: '',
+      populationSnapshotIRIs: allPopulationSnapshotIRIs,
+      landUseIRIs: allLandUseIRIs,
+      floodHazardZoneIRIs: allFloodHazardZoneIRIs,
+    };
+  }
+
+  /**
+   * Create metadata triples for a cluster
+   */
+  private createClusterMetadataTriples(cluster: SpatialCluster): RDFTriple[] {
+    const { baseUri } = this.options;
+    const triples: RDFTriple[] = [];
+    
+    const clusterIRI = `${baseUri}cluster_${cluster.id}`;
+    
+    // Add cluster type
+    triples.push(
+      this.createTriple(
+        clusterIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${baseUri}SpatialCluster`
+      )
+    );
+    
+    // Add cluster properties
+    triples.push(
+      this.createTriple(
+        clusterIRI,
+        `${baseUri}clusterId`,
+        this.createIntegerLiteral(cluster.id)
+      )
+    );
+    
+    triples.push(
+      this.createTriple(
+        clusterIRI,
+        `${baseUri}featureCount`,
+        this.createIntegerLiteral(cluster.features.length)
+      )
+    );
+    
+    triples.push(
+      this.createTriple(
+        clusterIRI,
+        `${baseUri}totalArea`,
+        this.createDoubleLiteral(cluster.totalArea)
+      )
+    );
+    
+    // Add centroid as geometry
+    const centroidWKT = `POINT(${cluster.centroid[0]} ${cluster.centroid[1]})`;
+    triples.push(
+      this.createTriple(
+        clusterIRI,
+        `${RDF_PREFIXES.geo}hasGeometry`,
+        `${clusterIRI}_centroid`
+      )
+    );
+    
+    triples.push(
+      this.createTriple(
+        `${clusterIRI}_centroid`,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Geometry`
+      )
+    );
+    
+    triples.push(
+      this.createTriple(
+        `${clusterIRI}_centroid`,
+        `${RDF_PREFIXES.geo}asWKT`,
+        this.createWKTLiteral(centroidWKT)
+      )
+    );
+
+    return triples;
   }
 
   /**
@@ -1443,6 +1570,366 @@ export class GeoSPARQLTransformer {
 
     // Create bounding box as POLYGON
     return `POLYGON((${transformedMin[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMin[1]}))`;
+  }
+
+  /**
+   * Apply spatial clustering to features if enabled
+   */
+  public clusterFeatures(features: GeoJSONFeature[]): SpatialCluster[] {
+    if (!this.options.enableClustering) {
+      // Return features as individual clusters
+      return features.map((feature, index) => ({
+        id: index,
+        centroid: this.calculateFeatureCentroid(feature),
+        features: [feature],
+        totalArea: this.calculateFeatureArea(feature),
+      }));
+    }
+
+    const maxDistance = this.options.maxClusterDistance || 10; // km
+    const maxArea = this.options.maxPolygonArea || 100; // sq km
+    const gridSize = this.options.gridSize || 5; // km
+
+    this.logger.info(`Applying spatial clustering with maxDistance=${maxDistance}km, maxArea=${maxArea}sq km, gridSize=${gridSize}km`);
+
+    // Step 1: Split large features by area
+    const splitFeatures = this.splitLargeFeatures(features, maxArea);
+    
+    // Step 2: Apply distance-based clustering
+    const distanceClusters = this.applyDistanceBasedClustering(splitFeatures, maxDistance);
+    
+    // Step 3: Apply grid-based clustering if needed
+    const finalClusters = this.applyGridBasedClustering(distanceClusters, gridSize);
+
+    this.logger.info(`Clustered ${features.length} features into ${finalClusters.length} clusters`);
+    
+    return finalClusters;
+  }
+
+  /**
+   * Split features that exceed maximum area threshold
+   */
+  private splitLargeFeatures(features: GeoJSONFeature[], maxArea: number): GeoJSONFeature[] {
+    const result: GeoJSONFeature[] = [];
+
+    for (const feature of features) {
+      const area = this.calculateFeatureArea(feature);
+      if (area > maxArea) {
+        // Split this feature into smaller parts
+        const splitFeatures = this.splitFeatureByArea(feature, maxArea);
+        result.push(...splitFeatures);
+        this.logger.debug(`Split feature with area ${area.toFixed(2)}sq km into ${splitFeatures.length} parts`);
+      } else {
+        result.push(feature);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Split a single feature into smaller features by area
+   */
+  private splitFeatureByArea(feature: GeoJSONFeature, maxArea: number): GeoJSONFeature[] {
+    // Simple grid-based splitting implementation
+    const geometry = feature.geometry;
+    
+    if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') {
+      return [feature]; // Can't split non-polygon features
+    }
+
+    // Calculate bounding box
+    const bbox = this.calculateFeatureBoundingBox(feature);
+    const [minX, minY, maxX, maxY] = bbox;
+    
+    const area = this.calculateFeatureArea(feature);
+    const splitFactor = Math.ceil(Math.sqrt(area / maxArea));
+    
+    const deltaX = (maxX - minX) / splitFactor;
+    const deltaY = (maxY - minY) / splitFactor;
+    
+    const splitFeatures: GeoJSONFeature[] = [];
+    let partIndex = 0;
+
+    for (let i = 0; i < splitFactor; i++) {
+      for (let j = 0; j < splitFactor; j++) {
+        const subBbox = [
+          minX + i * deltaX,
+          minY + j * deltaY,
+          minX + (i + 1) * deltaX,
+          minY + (j + 1) * deltaY
+        ];
+
+        // Create a clipped feature for this sub-area
+        const clippedFeature = this.clipFeatureToBoundingBox(feature, subBbox as [number, number, number, number]);
+        if (clippedFeature) {
+          // Add part identifier to properties
+          clippedFeature.properties = {
+            ...clippedFeature.properties,
+            _partIndex: partIndex++,
+            _originalFeatureId: this.generateGeometryHash(feature.geometry),
+          };
+          splitFeatures.push(clippedFeature);
+        }
+      }
+    }
+
+    return splitFeatures.length > 0 ? splitFeatures : [feature];
+  }
+
+  /**
+   * Apply distance-based clustering
+   */
+  private applyDistanceBasedClustering(features: GeoJSONFeature[], maxDistance: number): SpatialCluster[] {
+    const clusters: SpatialCluster[] = [];
+    const processed = new Set<number>();
+
+    for (let i = 0; i < features.length; i++) {
+      if (processed.has(i)) continue;
+
+      const cluster: SpatialCluster = {
+        id: clusters.length,
+        centroid: this.calculateFeatureCentroid(features[i]),
+        features: [features[i]],
+        totalArea: this.calculateFeatureArea(features[i]),
+      };
+
+      processed.add(i);
+
+      // Find nearby features to add to this cluster
+      for (let j = i + 1; j < features.length; j++) {
+        if (processed.has(j)) continue;
+
+        const distance = this.calculateDistance(
+          cluster.centroid,
+          this.calculateFeatureCentroid(features[j])
+        );
+
+        if (distance <= maxDistance) {
+          cluster.features.push(features[j]);
+          cluster.totalArea += this.calculateFeatureArea(features[j]);
+          processed.add(j);
+          
+          // Update cluster centroid (simple average)
+          const centroid = this.calculateClusterCentroid(cluster.features);
+          cluster.centroid = centroid;
+        }
+      }
+
+      clusters.push(cluster);
+    }
+
+    return clusters;
+  }
+
+  /**
+   * Apply grid-based clustering for fine-grained control
+   */
+  private applyGridBasedClustering(clusters: SpatialCluster[], gridSize: number): SpatialCluster[] {
+    // Group clusters by grid cell
+    const gridMap = new Map<string, SpatialCluster[]>();
+
+    for (const cluster of clusters) {
+      const gridKey = this.getGridKey(cluster.centroid, gridSize);
+      if (!gridMap.has(gridKey)) {
+        gridMap.set(gridKey, []);
+      }
+      gridMap.get(gridKey)!.push(cluster);
+    }
+
+    // Merge clusters within the same grid cell
+    const finalClusters: SpatialCluster[] = [];
+    let clusterId = 0;
+
+    for (const [, gridClusters] of gridMap) {
+      if (gridClusters.length === 1) {
+        finalClusters.push(gridClusters[0]);
+      } else {
+        // Merge multiple clusters in the same grid cell
+        const mergedCluster: SpatialCluster = {
+          id: clusterId++,
+          centroid: this.calculateClusterCentroid(
+            gridClusters.flatMap(c => c.features)
+          ),
+          features: gridClusters.flatMap(c => c.features),
+          totalArea: gridClusters.reduce((sum, c) => sum + c.totalArea, 0),
+        };
+        finalClusters.push(mergedCluster);
+      }
+    }
+
+    return finalClusters;
+  }
+
+  /**
+   * Calculate feature centroid
+   */
+  private calculateFeatureCentroid(feature: GeoJSONFeature): [number, number] {
+    const geometry = feature.geometry;
+    
+    if (geometry.type === 'Polygon' && geometry.coordinates && geometry.coordinates[0]) {
+      const coordinates = geometry.coordinates[0];
+      let sumLng = 0;
+      let sumLat = 0;
+      const pointCount = coordinates.length - 1; // Exclude closing point
+
+      for (let i = 0; i < pointCount; i++) {
+        sumLng += coordinates[i][0];
+        sumLat += coordinates[i][1];
+      }
+
+      return [sumLng / pointCount, sumLat / pointCount];
+    }
+    
+    if (geometry.type === 'Point' && geometry.coordinates) {
+      return [geometry.coordinates[0], geometry.coordinates[1]];
+    }
+
+    // Fallback for other geometry types
+    return [0, 0];
+  }
+
+  /**
+   * Calculate cluster centroid from multiple features
+   */
+  private calculateClusterCentroid(features: GeoJSONFeature[]): [number, number] {
+    if (features.length === 0) return [0, 0];
+
+    let sumLng = 0;
+    let sumLat = 0;
+
+    for (const feature of features) {
+      const centroid = this.calculateFeatureCentroid(feature);
+      sumLng += centroid[0];
+      sumLat += centroid[1];
+    }
+
+    return [sumLng / features.length, sumLat / features.length];
+  }
+
+  /**
+   * Calculate distance between two points in kilometers
+   */
+  private calculateDistance(point1: [number, number], point2: [number, number]): number {
+    const [lng1, lat1] = point1;
+    const [lng2, lat2] = point2;
+
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  /**
+   * Calculate approximate feature area in square kilometers
+   */
+  private calculateFeatureArea(feature: GeoJSONFeature): number {
+    const geometry = feature.geometry;
+    
+    if (geometry.type === 'Polygon' && geometry.coordinates && geometry.coordinates[0]) {
+      return this.calculatePolygonArea(geometry.coordinates[0]);
+    }
+    
+    if (geometry.type === 'MultiPolygon' && geometry.coordinates) {
+      let totalArea = 0;
+      for (const polygon of geometry.coordinates) {
+        if (polygon[0]) {
+          totalArea += this.calculatePolygonArea(polygon[0]);
+        }
+      }
+      return totalArea;
+    }
+
+    // For points and other geometries, return minimal area
+    return 0.01; // 0.01 sq km
+  }
+
+  /**
+   * Calculate polygon area using shoelace formula (approximate)
+   */
+  private calculatePolygonArea(coordinates: number[][]): number {
+    if (coordinates.length < 3) return 0;
+
+    let area = 0;
+    const n = coordinates.length - 1; // Exclude closing point
+
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      area += coordinates[i][0] * coordinates[j][1];
+      area -= coordinates[j][0] * coordinates[i][1];
+    }
+
+    area = Math.abs(area) / 2;
+    
+    // Convert to square kilometers (very rough approximation)
+    // This is a simplified conversion that works for small areas
+    const degreeToKm = 111; // Roughly 111 km per degree
+    return (area * degreeToKm * degreeToKm) / 1000000; // Convert to sq km
+  }
+
+  /**
+   * Calculate feature bounding box
+   */
+  private calculateFeatureBoundingBox(feature: GeoJSONFeature): [number, number, number, number] {
+    const geometry = feature.geometry;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    const processCoordinates = (coords: number[] | number[][] | number[][][]) => {
+      if (Array.isArray(coords[0])) {
+        for (const coord of coords as any[]) {
+          processCoordinates(coord);
+        }
+      } else {
+        const [x, y] = coords as number[];
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    };
+
+    if (geometry.coordinates) {
+      processCoordinates(geometry.coordinates);
+    }
+
+    return [minX, minY, maxX, maxY];
+  }
+
+  /**
+   * Clip feature to bounding box (simplified implementation)
+   */
+  private clipFeatureToBoundingBox(
+    feature: GeoJSONFeature,
+    bbox: [number, number, number, number]
+  ): GeoJSONFeature | null {
+    // This is a simplified implementation
+    // In a real-world scenario, you would use a proper geometry clipping library
+    const [minX, minY, maxX, maxY] = bbox;
+    const centroid = this.calculateFeatureCentroid(feature);
+
+    // Simple check: if centroid is within bbox, include the feature
+    if (centroid[0] >= minX && centroid[0] <= maxX && 
+        centroid[1] >= minY && centroid[1] <= maxY) {
+      return { ...feature };
+    }
+
+    return null;
+  }
+
+  /**
+   * Get grid key for a point based on grid size
+   */
+  private getGridKey(point: [number, number], gridSize: number): string {
+    const [lng, lat] = point;
+    const gridLng = Math.floor(lng / gridSize);
+    const gridLat = Math.floor(lat / gridSize);
+    return `${gridLng}_${gridLat}`;
   }
 }
 

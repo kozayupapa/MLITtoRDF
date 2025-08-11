@@ -31,6 +31,10 @@ interface CLIOptions {
   dataType: 'population-geojson' | 'landuse-geojson' | 'flood-geojson' | 'auto';
   aggregateByRank: boolean;
   minFloodDepthRank: number;
+  enableClustering: boolean;
+  maxClusterDistance: number;
+  maxPolygonArea: number;
+  gridSize: number;
 }
 
 /**
@@ -219,6 +223,10 @@ class MLITGeoJSONToRDF4J {
       useMinimalFloodProperties: true,
       aggregateFloodZonesByRank: this.options.aggregateByRank,
       minFloodDepthRank: this.options.minFloodDepthRank,
+      enableClustering: this.options.enableClustering,
+      maxClusterDistance: this.options.maxClusterDistance,
+      maxPolygonArea: this.options.maxPolygonArea,
+      gridSize: this.options.gridSize,
     });
   }
 
@@ -731,6 +739,26 @@ async function main(): Promise<void> {
       '--minFloodDepthRank <rank>',
       'Minimum flood depth rank to include (for data reduction)',
       '2'
+    )
+    .option(
+      '--enableClustering',
+      'Enable feature clustering for large polygons',
+      false
+    )
+    .option(
+      '--maxClusterDistance <distance>',
+      'Maximum distance for clustering (km)',
+      '10'
+    )
+    .option(
+      '--maxPolygonArea <area>',
+      'Maximum polygon area before splitting (sq km)',
+      '100'
+    )
+    .option(
+      '--gridSize <size>',
+      'Grid size for spatial clustering (km)',
+      '5'
     );
 
   program.parse();
@@ -740,6 +768,9 @@ async function main(): Promise<void> {
   // Parse numeric options
   options.batchSize = parseInt(options.batchSize.toString());
   options.minFloodDepthRank = parseInt(options.minFloodDepthRank.toString());
+  options.maxClusterDistance = parseFloat(options.maxClusterDistance.toString());
+  options.maxPolygonArea = parseFloat(options.maxPolygonArea.toString());
+  options.gridSize = parseFloat(options.gridSize.toString());
   if (options.maxFeatures) {
     options.maxFeatures = parseInt(options.maxFeatures.toString());
   }
@@ -782,6 +813,22 @@ async function main(): Promise<void> {
   // Validate flood depth rank
   if (options.minFloodDepthRank < 1 || options.minFloodDepthRank > 10) {
     console.error('Minimum flood depth rank must be between 1 and 10');
+    process.exit(1);
+  }
+
+  // Validate clustering options
+  if (options.maxClusterDistance <= 0) {
+    console.error('Maximum cluster distance must be positive');
+    process.exit(1);
+  }
+
+  if (options.maxPolygonArea <= 0) {
+    console.error('Maximum polygon area must be positive');
+    process.exit(1);
+  }
+
+  if (options.gridSize <= 0) {
+    console.error('Grid size must be positive');
     process.exit(1);
   }
 
