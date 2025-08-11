@@ -31,6 +31,11 @@ export interface TransformerOptions {
   minFloodDepthRank?: number;
   useMinimalFloodProperties?: boolean;
   aggregateFloodZonesByRank?: boolean;
+  // When true, split a single feature's large Polygon into multiple cluster-based polygons
+  splitLargePolygonFeature?: boolean;
+  // Distance thresholds for feature-level clustering (degrees)
+  featureClusterMaxDistanceLng?: number;
+  featureClusterMaxDistanceLat?: number;
 }
 
 export interface RDFTriple {
@@ -55,6 +60,7 @@ export interface AggregatedFloodZone {
   rankCode: number;
   polygons: any[]; // GeoJSON Polygon geometries
   clusterId: number; // Spatial clustering ID for distance-based grouping
+  uniqueBaseId?: string; // Optional unique base id to ensure IRI uniqueness
 }
 
 /**
@@ -257,6 +263,131 @@ export class GeoSPARQLTransformer {
         landUseIRIs: [],
         floodHazardZoneIRIs: [],
       };
+    }
+
+    // If enabled, split a single feature's MultiPolygon into clustered sub-zones
+    // Split a single large Polygon into multiple features by clustering vertices and
+    // creating convex hull polygons per cluster
+    if (
+      this.options.splitLargePolygonFeature &&
+      feature.geometry &&
+      feature.geometry.type === 'Polygon'
+    ) {
+      const clusterPolygons = this.splitPolygonIntoClusterPolygons(
+        feature.geometry
+      );
+
+      if (clusterPolygons.length > 1) {
+        const resultTriples: RDFTriple[] = [];
+        const resultIRIs: string[] = [];
+        const baseId = this.generateGeometryHash(feature.geometry).substring(
+          0,
+          8
+        );
+
+        let clusterIndex = 0;
+        for (const poly of clusterPolygons) {
+          const uniqueId = `${riverId}_${hazardType}_rank${rankCode}_${baseId}_part${clusterIndex}`;
+          const hazardZoneIRI = generateFloodHazardZoneIRI(
+            baseUri,
+            uniqueId,
+            hazardType
+          );
+          const geometryIRI = `${hazardZoneIRI}_geom`;
+          resultIRIs.push(hazardZoneIRI);
+
+          // Types
+          resultTriples.push(
+            this.createTriple(
+              hazardZoneIRI,
+              `${RDF_PREFIXES.rdf}type`,
+              `${RDF_PREFIXES.geo}Feature`
+            ),
+            this.createTriple(
+              hazardZoneIRI,
+              `${RDF_PREFIXES.rdf}type`,
+              MLIT_CLASSES.FloodHazardZone
+            ),
+            this.createTriple(
+              geometryIRI,
+              `${RDF_PREFIXES.rdf}type`,
+              `${RDF_PREFIXES.geo}Geometry`
+            )
+          );
+
+          // Link geometry
+          resultTriples.push(
+            this.createTriple(
+              hazardZoneIRI,
+              `${RDF_PREFIXES.geo}hasGeometry`,
+              geometryIRI
+            )
+          );
+
+          // Transform geometry to WKT
+          const wktGeometry = this.transformGeometry(poly);
+          resultTriples.push(
+            this.createTriple(
+              geometryIRI,
+              `${RDF_PREFIXES.geo}asWKT`,
+              this.createWKTLiteral(wktGeometry)
+            )
+          );
+
+          // Optional centroid
+          const centerPoint = this.calculateGeometryCenter(poly);
+          const centerIRI = `${geometryIRI}_center`;
+          resultTriples.push(
+            this.createTriple(
+              centerIRI,
+              `${RDF_PREFIXES.rdf}type`,
+              `${RDF_PREFIXES.geo}Geometry`
+            ),
+            this.createTriple(
+              centerIRI,
+              `${RDF_PREFIXES.geo}asWKT`,
+              this.createWKTLiteral(centerPoint)
+            ),
+            this.createTriple(
+              hazardZoneIRI,
+              `${RDF_PREFIXES.geo}hasCentroid`,
+              centerIRI
+            )
+          );
+
+          // Properties
+          if (this.options.useMinimalFloodProperties) {
+            this.addMinimalFloodProperties(
+              resultTriples,
+              hazardZoneIRI,
+              hazardType,
+              rankCode
+            );
+          } else {
+            const riverIRI = generateRiverIRI(baseUri, riverId);
+            this.addFullFloodProperties(
+              resultTriples,
+              hazardZoneIRI,
+              riverIRI,
+              riverId,
+              riverName,
+              hazardType,
+              rankCode
+            );
+          }
+
+          clusterIndex++;
+        }
+
+        return {
+          triples: resultTriples,
+          featureIRI: '',
+          geometryIRI: '',
+          populationSnapshotIRIs: [],
+          landUseIRIs: [],
+          floodHazardZoneIRIs: resultIRIs,
+        };
+      }
     }
 
     // Generate unique identifier from geometry hash to distinguish features with same riverId
@@ -1257,9 +1388,12 @@ export class GeoSPARQLTransformer {
       };
 
       // Generate unique IRI for aggregated zone with cluster ID
+      const idSuffix = zone.uniqueBaseId
+        ? `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}_${zone.uniqueBaseId}_cluster${zone.clusterId}`
+        : `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}_cluster${zone.clusterId}`;
       const aggregatedZoneIRI = generateFloodHazardZoneIRI(
         baseUri,
-        `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}_cluster${zone.clusterId}`,
+        idSuffix,
         zone.hazardType
       );
       const geometryIRI = `${aggregatedZoneIRI}_geom`;
@@ -1414,6 +1548,127 @@ export class GeoSPARQLTransformer {
 
     //to make simple use 1st polygon
     return polygon.coordinates[0][0];
+  }
+
+  /**
+   * Split a single large Polygon into multiple cluster-based polygons.
+   * Strategy: cluster vertices by axis-aligned distance threshold, then build
+   * a convex hull per cluster to form valid Polygon rings.
+   */
+  private splitPolygonIntoClusterPolygons(polygon: any): any[] {
+    if (!polygon.coordinates || !polygon.coordinates[0]) {
+      return [polygon];
+    }
+
+    const defaultMaxLng =
+      this.options.featureClusterMaxDistanceLng !== undefined
+        ? this.options.featureClusterMaxDistanceLng
+        : 0.015;
+    const defaultMaxLat =
+      this.options.featureClusterMaxDistanceLat !== undefined
+        ? this.options.featureClusterMaxDistanceLat
+        : 0.01;
+
+    const ring: [number, number][] = polygon.coordinates[0]
+      .slice(0, -1) // drop closing point
+      .map((p: any) => [p[0], p[1]]);
+
+    if (ring.length < 4) {
+      return [polygon];
+    }
+
+    const clusters = this.clusterPoints(ring, defaultMaxLng, defaultMaxLat);
+
+    if (clusters.length <= 1) {
+      return [polygon];
+    }
+
+    const resultPolygons: any[] = [];
+    for (const cluster of clusters) {
+      if (cluster.length < 3) continue;
+      const hull = this.createConvexHull(cluster);
+      if (hull.length < 3) continue;
+      const closed = [...hull, hull[0]];
+      resultPolygons.push({ type: 'Polygon', coordinates: [closed] });
+    }
+
+    // Fallback to original if clustering produced nothing useful
+    return resultPolygons.length > 0 ? resultPolygons : [polygon];
+  }
+
+  /**
+   * Greedy axis-aligned distance clustering for 2D points
+   */
+  private clusterPoints(
+    points: [number, number][],
+    maxDistanceLng: number,
+    maxDistanceLat: number
+  ): [number, number][][] {
+    const clusters: [number, number][][] = [];
+    const assigned = new Array(points.length).fill(false);
+
+    for (let i = 0; i < points.length; i++) {
+      if (assigned[i]) continue;
+      const seed = points[i];
+      const cluster: [number, number][] = [seed];
+      assigned[i] = true;
+      for (let j = i + 1; j < points.length; j++) {
+        if (assigned[j]) continue;
+        const p = points[j];
+        const diffLng = Math.abs(seed[0] - p[0]);
+        const diffLat = Math.abs(seed[1] - p[1]);
+        if (diffLng <= maxDistanceLng && diffLat <= maxDistanceLat) {
+          cluster.push(p);
+          assigned[j] = true;
+        }
+      }
+      clusters.push(cluster);
+    }
+
+    return clusters;
+  }
+
+  /**
+   * Convex hull (Monotone chain) for 2D points
+   */
+  private createConvexHull(points: [number, number][]): [number, number][] {
+    if (points.length <= 1) return points.slice();
+    const pts = points
+      .slice()
+      .sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
+
+    const cross = (
+      o: [number, number],
+      a: [number, number],
+      b: [number, number]
+    ) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+
+    const lower: [number, number][] = [];
+    for (const p of pts) {
+      while (
+        lower.length >= 2 &&
+        cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0
+      ) {
+        lower.pop();
+      }
+      lower.push(p);
+    }
+
+    const upper: [number, number][] = [];
+    for (let i = pts.length - 1; i >= 0; i--) {
+      const p = pts[i] as [number, number];
+      while (
+        upper.length >= 2 &&
+        cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0
+      ) {
+        upper.pop();
+      }
+      upper.push(p);
+    }
+
+    upper.pop();
+    lower.pop();
+    return lower.concat(upper);
   }
 
   /**

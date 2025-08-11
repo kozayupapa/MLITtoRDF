@@ -31,6 +31,10 @@ interface CLIOptions {
   dataType: 'population-geojson' | 'landuse-geojson' | 'flood-geojson' | 'auto';
   aggregateByRank: boolean;
   minFloodDepthRank: number;
+  // split a single feature's large Polygon into multiple polygons by clustering
+  splitLargePolygonFeature: boolean;
+  featureClusterMaxDistanceLng?: number;
+  featureClusterMaxDistanceLat?: number;
 }
 
 /**
@@ -219,6 +223,9 @@ class MLITGeoJSONToRDF4J {
       useMinimalFloodProperties: true,
       aggregateFloodZonesByRank: this.options.aggregateByRank,
       minFloodDepthRank: this.options.minFloodDepthRank,
+      splitLargePolygonFeature: this.options.splitLargePolygonFeature,
+      featureClusterMaxDistanceLng: this.options.featureClusterMaxDistanceLng,
+      featureClusterMaxDistanceLat: this.options.featureClusterMaxDistanceLat,
     });
   }
 
@@ -728,6 +735,21 @@ async function main(): Promise<void> {
       false
     )
     .option(
+      '--splitLargePolygonFeature',
+      'Split a single feature Polygon into multiple polygons when vertices are far apart',
+      false
+    )
+    .option(
+      '--featureClusterMaxDistanceLng <deg>',
+      'Longitude degree threshold for feature-level clustering (default ~0.015 ≈ 3km)',
+      '0.015'
+    )
+    .option(
+      '--featureClusterMaxDistanceLat <deg>',
+      'Latitude degree threshold for feature-level clustering (default ~0.01 ≈ 3km)',
+      '0.01'
+    )
+    .option(
       '--minFloodDepthRank <rank>',
       'Minimum flood depth rank to include (for data reduction)',
       '2'
@@ -745,6 +767,16 @@ async function main(): Promise<void> {
   }
   if (options.skipFeatures) {
     options.skipFeatures = parseInt(options.skipFeatures.toString());
+  }
+  if (options.featureClusterMaxDistanceLng !== undefined) {
+    options.featureClusterMaxDistanceLng = parseFloat(
+      options.featureClusterMaxDistanceLng.toString()
+    );
+  }
+  if (options.featureClusterMaxDistanceLat !== undefined) {
+    options.featureClusterMaxDistanceLat = parseFloat(
+      options.featureClusterMaxDistanceLat.toString()
+    );
   }
 
   // Validate numeric options
