@@ -31,6 +31,10 @@ export interface TransformerOptions {
   minFloodDepthRank?: number;
   useMinimalFloodProperties?: boolean;
   aggregateFloodZonesByRank?: boolean;
+  splitMultiPolygonFeatures?: boolean; // Option to split MultiPolygon features into individual Polygon features
+  splitLargePolygonsByClustering?: boolean; // Option to split a single large polygon by clustering its vertices
+  vertexClusterDistance?: number; // Distance in degrees for vertex clustering (default: 0.05, ~5km)
+  minVerticesForSplit?: number; // Minimum number of vertices in a polygon to trigger splitting (default: 200)
 }
 
 export interface RDFTriple {
@@ -101,15 +105,25 @@ export class GeoSPARQLTransformer {
    * Transform features with intelligent processing mode selection
    */
   public transformFeatures(features: GeoJSONFeature[]): TransformationResult {
-    // Determine the data type from features
-    const dataType = this.determineDataType(features);
+    // 1. Split MultiPolygons into multiple Polygon features
+    const splitFeatures = features.flatMap((feature) =>
+      this.splitMultiPolygonFeature(feature)
+    );
+
+    // 2. Split large, sparse Polygons into smaller, clustered Polygons
+    const processedFeatures = splitFeatures.flatMap((feature) =>
+      this.splitPolygonByClustering(feature)
+    );
+
+    // 3. Determine the data type from the processed features
+    const dataType = this.determineDataType(processedFeatures);
 
     if (dataType === 'flood-hazard' && this.options.aggregateFloodZonesByRank) {
       // Use aggregated processing for flood hazard data
-      return this.transformFloodHazardFeatures(features);
+      return this.transformFloodHazardFeatures(processedFeatures);
     } else {
       // Use individual feature processing for other data types
-      return this.transformIndividualFeatures(features);
+      return this.transformIndividualFeatures(processedFeatures);
     }
   }
 
@@ -156,6 +170,183 @@ export class GeoSPARQLTransformer {
       landUseIRIs: allLandUseIRIs,
       floodHazardZoneIRIs: allFloodHazardZoneIRIs,
     };
+  }
+
+  /**
+   * Splits a MultiPolygon feature into multiple single-Polygon features.
+   * If the feature is not a MultiPolygon or the option is disabled, it returns the original feature.
+   */
+  private splitMultiPolygonFeature(feature: GeoJSONFeature): GeoJSONFeature[] {
+    if (
+      this.options.splitMultiPolygonFeatures &&
+      feature.geometry &&
+      feature.geometry.type === 'MultiPolygon' &&
+      feature.geometry.coordinates.length > 1
+    ) {
+      this.logger.debug(
+        `Splitting MultiPolygon into ${feature.geometry.coordinates.length} Polygon features.`
+      );
+      return feature.geometry.coordinates.map((polygonCoords) => {
+        // Create a new feature for each polygon, copying original properties
+        const newFeature: GeoJSONFeature = {
+          type: 'Feature',
+          properties: {
+            ...feature.properties,
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: polygonCoords,
+          },
+        };
+        return newFeature;
+      });
+    }
+    // Return the original feature in an array if no splitting occurs
+    return [feature];
+  }
+
+  /**
+   * Splits a single large Polygon feature into multiple smaller features by clustering its vertices.
+   * This is useful for breaking up a single feature that covers multiple, geographically distant areas.
+   */
+  private splitPolygonByClustering(feature: GeoJSONFeature): GeoJSONFeature[] {
+    const minVertices = this.options.minVerticesForSplit ?? 200;
+
+    if (
+      !this.options.splitLargePolygonsByClustering ||
+      feature.geometry?.type !== 'Polygon' ||
+      feature.geometry.coordinates[0].length < minVertices
+    ) {
+      return [feature];
+    }
+
+    // The last vertex is the same as the first; ignore it for clustering.
+    const vertices = feature.geometry.coordinates[0].slice(0, -1);
+
+    const vertexClusters = this.clusterVertices(vertices);
+
+    // If the polygon was not split into multiple clusters, return the original.
+    if (vertexClusters.length <= 1) {
+      return [feature];
+    }
+
+    this.logger.debug(
+      `Splitting a large Polygon with ${vertices.length} vertices into ${vertexClusters.length} smaller Polygons.`
+    );
+
+    return vertexClusters
+      .map((cluster) => {
+        // A valid polygon requires at least 3 vertices.
+        if (cluster.length < 3) {
+          return null;
+        }
+        // Create a new polygon from the convex hull of the vertex cluster.
+        const convexHull = this.createConvexHull(cluster);
+        if (convexHull.length < 4) {
+          // A valid GeoJSON polygon ring needs at least 4 points (3 unique + 1 closing).
+          return null;
+        }
+
+        const newFeature: GeoJSONFeature = {
+          type: 'Feature',
+          properties: { ...feature.properties },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [convexHull],
+          },
+        };
+        return newFeature;
+      })
+      .filter((f): f is GeoJSONFeature => f !== null);
+  }
+
+  /**
+   * Groups an array of vertices into clusters based on proximity.
+   * Uses a Breadth-First Search (BFS) approach to find connected components.
+   */
+  private clusterVertices(vertices: [number, number][]): [number, number][][] {
+    const clusterDistance = this.options.vertexClusterDistance ?? 0.05; // ~5km
+    const clusterDistanceSq = clusterDistance * clusterDistance; // Use squared distance for efficiency
+    const clusters: [number, number][][] = [];
+    const visited = new Array(vertices.length).fill(false);
+
+    for (let i = 0; i < vertices.length; i++) {
+      if (visited[i]) continue;
+
+      const cluster: [number, number][] = [];
+      const queue = [i];
+      visited[i] = true;
+
+      while (queue.length > 0) {
+        const currentIndex = queue.shift()!;
+        cluster.push(vertices[currentIndex]);
+
+        for (let j = i + 1; j < vertices.length; j++) {
+          if (visited[j]) continue;
+
+          const distSq =
+            Math.pow(vertices[currentIndex][0] - vertices[j][0], 2) +
+            Math.pow(vertices[currentIndex][1] - vertices[j][1], 2);
+
+          if (distSq <= clusterDistanceSq) {
+            visited[j] = true;
+            queue.push(j);
+          }
+        }
+      }
+      clusters.push(cluster);
+    }
+    return clusters;
+  }
+
+  /**
+   * Creates a convex hull from a set of points using the Jarvis March algorithm.
+   */
+  private createConvexHull(points: [number, number][]): [number, number][] {
+    if (points.length < 3) return [];
+
+    const hull: [number, number][] = [];
+    let startPointIndex = points.reduce(
+      (minIndex, p, i, arr) => (p[0] < arr[minIndex][0] ? i : minIndex),
+      0
+    );
+
+    let currentPointIndex = startPointIndex;
+    do {
+      hull.push(points[currentPointIndex]);
+      let nextPointIndex = (currentPointIndex + 1) % points.length;
+      for (let i = 0; i < points.length; i++) {
+        if (
+          this.orientation(
+            points[currentPointIndex],
+            points[i],
+            points[nextPointIndex]
+          ) === 2
+        ) {
+          nextPointIndex = i;
+        }
+      }
+      currentPointIndex = nextPointIndex;
+    } while (currentPointIndex !== startPointIndex);
+
+    hull.push(hull[0]); // Close the polygon
+    return hull;
+  }
+
+  /**
+   * Helper to find orientation of ordered triplet (p, q, r).
+   * @returns 0 --> p, q and r are collinear
+   * @returns 1 --> Clockwise
+   * @returns 2 --> Counterclockwise
+   */
+  private orientation(
+    p: [number, number],
+    q: [number, number],
+    r: [number, number]
+  ): number {
+    const val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1]);
+    if (Math.abs(val) < 1e-10) return 0; // Collinear
+    return val > 0 ? 1 : 2; // Clockwise or Counter-clockwise
   }
 
   /**
