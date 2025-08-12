@@ -5,8 +5,8 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/main.js",
-    "dev": "ts-node src/main.ts",
+    "start": "NODE_OPTIONS=--max-old-space-size=8192 node dist/main.js",
+    "dev": "NODE_OPTIONS=--max-old-space-size=8192 ts-node src/main.ts",
     "query": "node dist/query-tool.js",
     "query:dev": "ts-node src/query-tool.ts",
     "sparql": "ts-node src/sparql-executor.ts",
