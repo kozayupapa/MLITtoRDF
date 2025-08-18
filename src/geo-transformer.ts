@@ -149,6 +149,12 @@ export class GeoSPARQLTransformer {
         allFloodHazardZoneIRIs.push(...result.floodHazardZoneIRIs);
         allPopulationSnapshotIRIs.push(...result.populationSnapshotIRIs);
         allLandUseIRIs.push(...result.landUseIRIs);
+
+        // Add bounding box for flood hazard features when clustering is enabled
+        if (this.isFloodHazardData(feature) && result.floodHazardZoneIRIs.length > 0) {
+          const boundingBoxTriples = this.createBoundingBoxForFeature(feature, result.floodHazardZoneIRIs[0]);
+          allTriples.push(...boundingBoxTriples);
+        }
       }
 
       // Add cluster metadata triples if needed
@@ -238,6 +244,58 @@ export class GeoSPARQLTransformer {
     );
 
     return triples;
+  }
+
+  /**
+   * Create bounding box triples for a single feature
+   */
+  private createBoundingBoxForFeature(feature: GeoJSONFeature, featureIRI: string): RDFTriple[] {
+    const triples: RDFTriple[] = [];
+    const boundingBoxIRI = `${featureIRI}_bbox`;
+
+    // Add bounding box type
+    triples.push(
+      this.createTriple(
+        boundingBoxIRI,
+        `${RDF_PREFIXES.rdf}type`,
+        `${RDF_PREFIXES.geo}Geometry`
+      )
+    );
+
+    // Link feature to bounding box
+    triples.push(
+      this.createTriple(
+        featureIRI,
+        `${RDF_PREFIXES.geo}hasBoundingBox`,
+        boundingBoxIRI
+      )
+    );
+
+    // Calculate and add bounding box geometry
+    const boundingBox = this.calculateFeatureBoundingBoxWKT(feature);
+    triples.push(
+      this.createTriple(
+        boundingBoxIRI,
+        `${RDF_PREFIXES.geo}asWKT`,
+        this.createWKTLiteral(boundingBox)
+      )
+    );
+
+    return triples;
+  }
+
+  /**
+   * Calculate bounding box for a single feature and return as WKT
+   */
+  private calculateFeatureBoundingBoxWKT(feature: GeoJSONFeature): string {
+    const [minX, minY, maxX, maxY] = this.calculateFeatureBoundingBox(feature);
+
+    // Transform bounding box coordinates from JGD2011 to WGS84
+    const transformedMin = proj4('JGD2011', 'WGS84', [minX, minY]);
+    const transformedMax = proj4('JGD2011', 'WGS84', [maxX, maxY]);
+
+    // Create bounding box as POLYGON
+    return `POLYGON((${transformedMin[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMin[1]}, ${transformedMax[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMax[1]}, ${transformedMin[0]} ${transformedMin[1]}))`;
   }
 
   /**
