@@ -32,6 +32,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@turf/simplify": "^7.2.0",
+    "@turf/turf": "^7.2.0",
     "commander": "^11.1.0",
     "fetch-sparql-endpoint": "^4.1.1",
     "node-fetch": "^2.7.0",

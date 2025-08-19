@@ -31,6 +31,9 @@ interface CLIOptions {
   dataType: 'population-geojson' | 'landuse-geojson' | 'flood-geojson' | 'auto';
   aggregateByRank: boolean;
   minFloodDepthRank: number;
+  enableSimplification: boolean;
+  simplificationTolerance: number;
+  simplificationHighQuality: boolean;
 }
 
 /**
@@ -219,6 +222,9 @@ class MLITGeoJSONToRDF4J {
       useMinimalFloodProperties: true,
       aggregateFloodZonesByRank: this.options.aggregateByRank,
       minFloodDepthRank: this.options.minFloodDepthRank,
+      enableSimplification: this.options.enableSimplification,
+      simplificationTolerance: this.options.simplificationTolerance,
+      simplificationHighQuality: this.options.simplificationHighQuality,
     });
   }
 
@@ -731,6 +737,21 @@ async function main(): Promise<void> {
       '--minFloodDepthRank <rank>',
       'Minimum flood depth rank to include (for data reduction)',
       '2'
+    )
+    .option(
+      '--enableSimplification',
+      'Enable polygon simplification for low zoom level display',
+      false
+    )
+    .option(
+      '--simplificationTolerance <tolerance>',
+      'Tolerance for polygon simplification (lower = more detail)',
+      '0.01'
+    )
+    .option(
+      '--simplificationHighQuality',
+      'Use high quality simplification algorithm',
+      false
     );
 
   program.parse();
@@ -740,6 +761,7 @@ async function main(): Promise<void> {
   // Parse numeric options
   options.batchSize = parseInt(options.batchSize.toString());
   options.minFloodDepthRank = parseInt(options.minFloodDepthRank.toString());
+  options.simplificationTolerance = parseFloat(options.simplificationTolerance.toString());
   if (options.maxFeatures) {
     options.maxFeatures = parseInt(options.maxFeatures.toString());
   }
@@ -782,6 +804,12 @@ async function main(): Promise<void> {
   // Validate flood depth rank
   if (options.minFloodDepthRank < 1 || options.minFloodDepthRank > 10) {
     console.error('Minimum flood depth rank must be between 1 and 10');
+    process.exit(1);
+  }
+
+  // Validate simplification options
+  if (options.simplificationTolerance <= 0) {
+    console.error('Simplification tolerance must be positive');
     process.exit(1);
   }
 
