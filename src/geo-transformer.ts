@@ -340,7 +340,10 @@ export class GeoSPARQLTransformer {
 
     // Add simplified geometry for low zoom level display
     if (this.options.enableSimplification) {
-      const simplifiedTriples = this.createSimplifiedGeometryForFeature(feature, hazardZoneIRI);
+      const simplifiedTriples = this.createSimplifiedGeometryForFeature(
+        feature,
+        hazardZoneIRI
+      );
       triples.push(...simplifiedTriples);
     }
 
@@ -1215,7 +1218,8 @@ export class GeoSPARQLTransformer {
     features: GeoJSONFeature[],
     centroids: [number, number][],
     maxDistanceLng: number,
-    maxDistanceLat: number
+    maxDistanceLat: number,
+    maxFeaturesPerCluster = 500
   ): GeoJSONFeature[][] {
     if (features.length === 0) return [];
     if (features.length === 1) return [features];
@@ -1240,6 +1244,7 @@ export class GeoSPARQLTransformer {
           cluster.push(features[j]);
           assigned.add(j);
         }
+        if (cluster.length >= maxFeaturesPerCluster) break;
       }
 
       clusters.push(cluster);
@@ -1262,24 +1267,38 @@ export class GeoSPARQLTransformer {
       if (zone.polygons.length === 0) continue;
 
       // Clean and simplify each polygon before creating the MultiPolygon
-      const cleanedPolygonCoordinates = zone.polygons.map(p => {
-        try {
-          if (p && p.coordinates && p.coordinates[0] && p.coordinates[0].length >= 4) {
-            const feature = turf.polygon(p.coordinates);
-            // Clean the coordinates first to remove redundant nodes
-            const cleaned = turf.cleanCoords(feature);
-            // Then simplify. A small tolerance helps fix minor topology issues.
-            const simplified = turf.simplify(cleaned, { tolerance: 0.00001, highQuality: false });
-            return simplified.geometry.coordinates;
+      const cleanedPolygonCoordinates = zone.polygons
+        .map((p) => {
+          try {
+            if (
+              p &&
+              p.coordinates &&
+              p.coordinates[0] &&
+              p.coordinates[0].length >= 4
+            ) {
+              const feature = turf.polygon(p.coordinates);
+              // Clean the coordinates first to remove redundant nodes
+              const cleaned = turf.cleanCoords(feature);
+              // Then simplify. A small tolerance helps fix minor topology issues.
+              const simplified = turf.simplify(cleaned, {
+                tolerance: 0.0001,
+                highQuality: false,
+              });
+              return simplified.geometry.coordinates;
+            }
+          } catch (err: any) {
+            this.logger.warn(
+              `Could not process a polygon for river ${zone.riverId}: ${err.message}`
+            );
           }
-        } catch (err: any) {
-          this.logger.warn(`Could not process a polygon for river ${zone.riverId}: ${err.message}`);
-        }
-        return null; // Return null for invalid or problematic polygons
-      }).filter(coords => coords !== null) as any[]; // Filter out any nulls
+          return null; // Return null for invalid or problematic polygons
+        })
+        .filter((coords) => coords !== null) as any[]; // Filter out any nulls
 
       if (cleanedPolygonCoordinates.length === 0) {
-        this.logger.warn(`No valid polygons remained after cleaning for river ${zone.riverId}, rank ${zone.rankCode}.`);
+        this.logger.warn(
+          `No valid polygons remained after cleaning for river ${zone.riverId}, rank ${zone.rankCode}.`
+        );
         continue;
       }
 
@@ -1360,7 +1379,8 @@ export class GeoSPARQLTransformer {
 
       // Add simplified geometry for low zoom level display
       if (this.options.enableSimplification) {
-        const simplifiedMultiPolygonGeometry = this.createSimplifiedMultiPolygonGeometry(multiPolygonGeometry);
+        const simplifiedMultiPolygonGeometry =
+          this.createSimplifiedMultiPolygonGeometry(multiPolygonGeometry);
         if (simplifiedMultiPolygonGeometry) {
           const simplifiedGeometryIRI = `${aggregatedZoneIRI}_simplified`;
           triples.push(
@@ -1382,7 +1402,9 @@ export class GeoSPARQLTransformer {
             this.createTriple(
               simplifiedGeometryIRI,
               `${this.options.baseUri}simplificationTolerance`,
-              this.createDoubleLiteral(this.options.simplificationTolerance || 0.01)
+              this.createDoubleLiteral(
+                this.options.simplificationTolerance || 0.01
+              )
             )
           );
         }
@@ -1482,7 +1504,10 @@ export class GeoSPARQLTransformer {
   /**
    * Create simplified geometry triples for a single feature (for low zoom levels)
    */
-  private createSimplifiedGeometryForFeature(feature: GeoJSONFeature, featureIRI: string): RDFTriple[] {
+  private createSimplifiedGeometryForFeature(
+    feature: GeoJSONFeature,
+    featureIRI: string
+  ): RDFTriple[] {
     const triples: RDFTriple[] = [];
     const simplifiedGeometryIRI = `${featureIRI}_simplified`;
 
@@ -1541,13 +1566,16 @@ export class GeoSPARQLTransformer {
       const highQuality = this.options.simplificationHighQuality || false;
 
       // Create a proper GeoJSON feature for Turf.js
-      const turfFeature = turf.feature(feature.geometry as any, feature.properties);
-      
+      const turfFeature = turf.feature(
+        feature.geometry as any,
+        feature.properties
+      );
+
       // Simplify the geometry
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false
+        mutate: false,
       });
 
       if (!simplified || !simplified.geometry) {
@@ -1556,9 +1584,11 @@ export class GeoSPARQLTransformer {
       }
 
       // Transform coordinates and convert to WKT
-      const transformedGeometry = this.transformCoordinates(simplified.geometry);
+      const transformedGeometry = this.transformCoordinates(
+        simplified.geometry
+      );
       const wkt = wellknown.stringify(transformedGeometry);
-      
+
       return wkt;
     } catch (error) {
       this.logger?.error('Error creating simplified geometry:', error);
@@ -1569,7 +1599,9 @@ export class GeoSPARQLTransformer {
   /**
    * Create simplified MultiPolygon geometry
    */
-  private createSimplifiedMultiPolygonGeometry(multiPolygonGeometry: any): string | null {
+  private createSimplifiedMultiPolygonGeometry(
+    multiPolygonGeometry: any
+  ): string | null {
     try {
       if (!this.options.enableSimplification) {
         return null;
@@ -1580,26 +1612,33 @@ export class GeoSPARQLTransformer {
 
       // Create a proper GeoJSON feature for Turf.js
       const turfFeature = turf.feature(multiPolygonGeometry as any);
-      
+
       // Simplify the geometry
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false
+        mutate: false,
       });
 
       if (!simplified || !simplified.geometry) {
-        this.logger?.warn('Failed to simplify MultiPolygon geometry - no result');
+        this.logger?.warn(
+          'Failed to simplify MultiPolygon geometry - no result'
+        );
         return null;
       }
 
       // Transform coordinates and convert to WKT
-      const transformedGeometry = this.transformCoordinates(simplified.geometry);
+      const transformedGeometry = this.transformCoordinates(
+        simplified.geometry
+      );
       const wkt = wellknown.stringify(transformedGeometry);
-      
+
       return wkt;
     } catch (error) {
-      this.logger?.error('Error creating simplified MultiPolygon geometry:', error);
+      this.logger?.error(
+        'Error creating simplified MultiPolygon geometry:',
+        error
+      );
       return null;
     }
   }
