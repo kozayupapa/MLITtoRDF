@@ -8,6 +8,7 @@ import proj4 from 'proj4';
 import { createHash } from 'crypto';
 import { Logger } from 'winston';
 import { GeoJSONFeature } from './data-parser';
+import { Feature, Polygon } from 'geojson';
 import wellknown from 'wellknown';
 import * as turf from '@turf/turf';
 import { simplify } from '@turf/simplify';
@@ -340,7 +341,10 @@ export class GeoSPARQLTransformer {
 
     // Add simplified geometry for low zoom level display
     if (this.options.enableSimplification) {
-      const simplifiedTriples = this.createSimplifiedGeometryForFeature(feature, hazardZoneIRI);
+      const simplifiedTriples = this.createSimplifiedGeometryForFeature(
+        feature,
+        hazardZoneIRI
+      );
       triples.push(...simplifiedTriples);
     }
 
@@ -676,6 +680,11 @@ export class GeoSPARQLTransformer {
 
       // Convert to WKT
       const wkt = wellknown.stringify(transformedGeometry);
+
+      // --- DEBUG LOGGING START ---
+      this.logger.info(`[DEBUG] Generated WKT: ${wkt}`);
+      // --- DEBUG LOGGING END ---
+
       return wkt;
     } catch (error) {
       this.logger.error('Error transforming geometry:', error);
@@ -1130,8 +1139,10 @@ export class GeoSPARQLTransformer {
   private aggregateFloodZonesByRank(
     features: GeoJSONFeature[]
   ): AggregatedFloodZone[] {
-    const MAX_DISTANCE_LNG = 0.015; // about 3km distance limit
-    const MAX_DISTANCE_LAT = 0.01; // about 3km distance
+    const MAX_DISTANCE_LNG = 0.015; // about 1.5km distance limit
+    const MAX_DISTANCE_LAT = 0.01; // about 1.1km distance
+    const MAX_POLYGONS_PER_CLUSTER = 1000; // Hard limit to prevent overly complex MultiPolygons
+
     const preliminaryGroups = new Map<
       string,
       { features: GeoJSONFeature[]; centroids: [number, number][] }
@@ -1146,7 +1157,6 @@ export class GeoSPARQLTransformer {
       const propertyMappings = this.getPropertyMappings(hazardType);
 
       const riverId = props[propertyMappings.riverIdProp];
-      //const riverName = props[propertyMappings.riverNameProp];
       const rankCode = props[propertyMappings.rangeProp];
 
       if (!riverId || this.shouldSkipLowRankFeature(hazardType, rankCode)) {
@@ -1178,12 +1188,13 @@ export class GeoSPARQLTransformer {
           this.getPropertyMappings(hazardType).riverNameProp
         ];
 
-      // Spatial clustering: group features that are within 30km of each other
+      // Spatial clustering with a hard limit on cluster size
       const spatialClusters = this.createSpatialClusters(
         group.features,
         group.centroids,
         MAX_DISTANCE_LNG,
-        MAX_DISTANCE_LAT
+        MAX_DISTANCE_LAT,
+        MAX_POLYGONS_PER_CLUSTER
       );
 
       for (let clusterId = 0; clusterId < spatialClusters.length; clusterId++) {
@@ -1209,16 +1220,16 @@ export class GeoSPARQLTransformer {
   }
 
   /**
-   * Create spatial clusters based on distance threshold
+   * Create spatial clusters based on distance threshold and size limit
    */
   private createSpatialClusters(
     features: GeoJSONFeature[],
     centroids: [number, number][],
     maxDistanceLng: number,
-    maxDistanceLat: number
+    maxDistanceLat: number,
+    maxFeaturesPerCluster: number
   ): GeoJSONFeature[][] {
     if (features.length === 0) return [];
-    if (features.length === 1) return [features];
 
     const clusters: GeoJSONFeature[][] = [];
     const assigned = new Set<number>();
@@ -1230,18 +1241,23 @@ export class GeoSPARQLTransformer {
       assigned.add(i);
       const clusterCentroid = centroids[i];
 
-      // Find all features within maxDistance of this cluster
+      // Find all features within maxDistance of this cluster, up to the size limit
       for (let j = i + 1; j < features.length; j++) {
         if (assigned.has(j)) continue;
 
+        // Check if the cluster is already full
+        if (cluster.length >= maxFeaturesPerCluster) {
+          break; // Stop adding to this cluster
+        }
+
         const diffLng = Math.abs(clusterCentroid[0] - centroids[j][0]);
         const diffLat = Math.abs(clusterCentroid[1] - centroids[j][1]);
+
         if (diffLng <= maxDistanceLng && diffLat <= maxDistanceLat) {
           cluster.push(features[j]);
           assigned.add(j);
         }
       }
-
       clusters.push(cluster);
     }
 
@@ -1261,167 +1277,226 @@ export class GeoSPARQLTransformer {
     for (const zone of aggregatedZones) {
       if (zone.polygons.length === 0) continue;
 
-      // Clean and simplify each polygon before creating the MultiPolygon
-      const cleanedPolygonCoordinates = zone.polygons.map(p => {
-        try {
-          if (p && p.coordinates && p.coordinates[0] && p.coordinates[0].length >= 4) {
-            const feature = turf.polygon(p.coordinates);
-            // Clean the coordinates first to remove redundant nodes
-            const cleaned = turf.cleanCoords(feature);
-            // Then simplify. A small tolerance helps fix minor topology issues.
-            const simplified = turf.simplify(cleaned, { tolerance: 0.00001, highQuality: false });
-            return simplified.geometry.coordinates;
-          }
-        } catch (err: any) {
-          this.logger.warn(`Could not process a polygon for river ${zone.riverId}: ${err.message}`);
-        }
-        return null; // Return null for invalid or problematic polygons
-      }).filter(coords => coords !== null) as any[]; // Filter out any nulls
-
-      if (cleanedPolygonCoordinates.length === 0) {
-        this.logger.warn(`No valid polygons remained after cleaning for river ${zone.riverId}, rank ${zone.rankCode}.`);
-        continue;
-      }
-
-      // Create MultiPolygon geometry from the cleaned coordinates
-      const multiPolygonGeometry = {
-        type: 'MultiPolygon',
-        coordinates: cleanedPolygonCoordinates,
-      };
-
-      // Generate unique IRI for aggregated zone with cluster ID
+      // Generate IRIs for the aggregated zone
       const aggregatedZoneIRI = generateFloodHazardZoneIRI(
         baseUri,
-        `${zone.riverId}_${zone.hazardType}_rank${zone.rankCode}_cluster${zone.clusterId}`,
+        `${zone.riverId}_${zone.hazardType}_${zone.rankCode}_${zone.clusterId}`,
         zone.hazardType
       );
       const geometryIRI = `${aggregatedZoneIRI}_geom`;
       const boundingBoxIRI = `${aggregatedZoneIRI}_bbox`;
 
-      floodHazardZoneIRIs.push(aggregatedZoneIRI);
-
-      // Add type declarations
-      triples.push(
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${RDF_PREFIXES.rdf}type`,
-          `${RDF_PREFIXES.geo}Feature`
-        ),
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${RDF_PREFIXES.rdf}type`,
-          MLIT_CLASSES.FloodHazardZone
-        ),
-        this.createTriple(
-          geometryIRI,
-          `${RDF_PREFIXES.rdf}type`,
-          `${RDF_PREFIXES.geo}Geometry`
-        ),
-        this.createTriple(
-          boundingBoxIRI,
-          `${RDF_PREFIXES.rdf}type`,
-          `${RDF_PREFIXES.geo}Geometry`
-        )
+      this.logger.info(
+        `[DEBUG] Processing zone: river ${zone.riverId}, rank ${zone.rankCode}, cluster ${zone.clusterId} with ${zone.polygons.length} input polygons.`
       );
 
-      // Link zone to geometries
-      triples.push(
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${RDF_PREFIXES.geo}hasGeometry`,
-          geometryIRI
-        ),
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${RDF_PREFIXES.geo}hasBoundingBox`,
-          boundingBoxIRI
-        )
-      );
+      let featuresToUnion: Feature<Polygon>[] = [];
+      let unionedFeature: Feature<GeoJSON.Geometry> | null = null;
+      let wktMultiPolygon: string | undefined = undefined;
 
-      // Transform and add MultiPolygon geometry
-      const wktMultiPolygon = this.transformGeometry(multiPolygonGeometry);
-      triples.push(
-        this.createTriple(
-          geometryIRI,
-          `${RDF_PREFIXES.geo}asWKT`,
-          this.createWKTLiteral(wktMultiPolygon)
-        )
-      );
+      try {
+        // 1. Convert all polygons in the cluster to valid Turf.js features
+        featuresToUnion = zone.polygons
+          .map((p) => {
+            try {
+              if (
+                p &&
+                p.coordinates &&
+                p.coordinates.length > 0 &&
+                p.coordinates[0].length >= 4
+              ) {
+                const feature = turf.polygon(p.coordinates as any) as Feature<Polygon>;
+                const cleaned = turf.cleanCoords(feature);
 
-      // Calculate and add bounding box
-      const boundingBox = this.calculateBoundingBox(multiPolygonGeometry);
-      triples.push(
-        this.createTriple(
-          boundingBoxIRI,
-          `${RDF_PREFIXES.geo}asWKT`,
-          this.createWKTLiteral(boundingBox)
-        )
-      );
+                // Add detailed logging for area check
+                const area = turf.area(cleaned);
+                if (area <= 0) {
+                  this.logger.warn(
+                    `[DEBUG] Found polygon with zero or negative area in zone ${zone.clusterId}. Area: ${area}. Skipping it.`
+                  );
+                  return null;
+                }
+                return cleaned;
+              }
+            } catch (err: any) {
+              this.logger.warn(
+                `[DEBUG] Skipping a malformed polygon for river ${zone.riverId} during creation: ${err.message}`
+              );
+            }
+            return null;
+          })
+          .filter((p): p is Feature<Polygon> => p !== null);
 
-      // Add simplified geometry for low zoom level display
-      if (this.options.enableSimplification) {
-        const simplifiedMultiPolygonGeometry = this.createSimplifiedMultiPolygonGeometry(multiPolygonGeometry);
-        if (simplifiedMultiPolygonGeometry) {
-          const simplifiedGeometryIRI = `${aggregatedZoneIRI}_simplified`;
-          triples.push(
-            this.createTriple(
-              simplifiedGeometryIRI,
-              `${RDF_PREFIXES.rdf}type`,
-              `${RDF_PREFIXES.geo}Geometry`
-            ),
-            this.createTriple(
-              aggregatedZoneIRI,
-              `${RDF_PREFIXES.geo}hasSimplifiedGeometry`,
-              simplifiedGeometryIRI
-            ),
-            this.createTriple(
-              simplifiedGeometryIRI,
-              `${RDF_PREFIXES.geo}asWKT`,
-              this.createWKTLiteral(simplifiedMultiPolygonGeometry)
-            ),
-            this.createTriple(
-              simplifiedGeometryIRI,
-              `${this.options.baseUri}simplificationTolerance`,
-              this.createDoubleLiteral(this.options.simplificationTolerance || 0.01)
-            )
+        this.logger.info(
+          `[DEBUG] Zone ${zone.clusterId} has ${featuresToUnion.length} valid, non-zero-area polygons to be unioned.`
+        );
+
+        if (featuresToUnion.length === 0) {
+          this.logger.warn(
+            `No valid polygons to aggregate for river ${zone.riverId}, rank ${zone.rankCode}, cluster ${zone.clusterId}`
+          );
+          continue;
+        }
+
+        // 2. Perform the geometric union
+        if (featuresToUnion.length > 1) {
+          this.logger.info(
+            `[DEBUG] Attempting to union ${featuresToUnion.length} polygons for zone ${zone.clusterId}.`
+          );
+          // @ts-ignore - Suppress spread operator type error which is a known issue with Turf's complex function overloads
+          unionedFeature = turf.union(turf.featureCollection(featuresToUnion));
+        } else {
+          this.logger.info(
+            `[DEBUG] Skipping union for zone ${zone.clusterId} as it only has ${featuresToUnion.length} polygon.`
+          );
+          unionedFeature = featuresToUnion[0];
+        }
+
+        // Add a null check for the unioned feature
+        if (!unionedFeature || !unionedFeature.geometry) {
+          this.logger.error(
+            `[DEBUG] CRITICAL: Union result is null or has no geometry for zone ${zone.clusterId}. Skipping this zone.`
+          );
+          continue; // Skip to the next zone
+        }
+
+        // The final, clean geometry to be used for WKT conversion and other operations
+        const finalGeometry = turf.getGeom(unionedFeature!) as GeoJSON.Geometry;
+
+        // --- ジオメトリの検証と修正 ---
+        let processedGeometry: GeoJSON.Geometry = finalGeometry;
+
+        // 1. turf.rewind を適用してリングの向きを標準化
+        try {
+          processedGeometry = turf.rewind(finalGeometry as any, { reverse: false }) as GeoJSON.Geometry; // GeoJSON標準の右手法則 (時計回りの外部リング、反時計回りの内部リング)
+        } catch (rewindError: any) {
+          this.logger.warn(
+            `[DEBUG] Rewind failed for zone ${zone.clusterId}. Error: ${rewindError.message}. Using original geometry.`
+          );
+          // エラーが発生しても元のジオメトリを使用
+        }
+
+        // 2. ジオメトリの有効性をチェック
+        // @ts-ignore
+        const isValid = turf.booleanValid(processedGeometry as any);
+        if (!isValid) {
+          this.logger.warn(
+            `[DEBUG] WARNING: Invalid geometry detected for zone ${zone.clusterId} after union and rewind. Attempting to process despite invalidity.`
+          );
+          // @ts-ignore
+          this.logger.warn(`  Invalid Geometry WKT: ${wellknown.stringify(processedGeometry)}`);
+          // 無効なジオメトリの場合でも処理を続行
+        }
+        // --- ジオメトリの検証と修正 終わり ---
+
+        // Transform and add the final geometry (processedGeometry を使用)
+        wktMultiPolygon = this.transformGeometry(processedGeometry);
+
+        triples.push(
+          this.createTriple(
+            geometryIRI,
+            `${RDF_PREFIXES.geo}asWKT`,
+            this.createWKTLiteral(wktMultiPolygon)
+          )
+        );
+
+        // Calculate and add bounding box from the final geometry
+        const boundingBox = this.calculateBoundingBox(finalGeometry);
+        triples.push(
+          this.createTriple(
+            boundingBoxIRI,
+            `${RDF_PREFIXES.geo}asWKT`,
+            this.createWKTLiteral(boundingBox)
+          )
+        );
+
+        // Add simplified geometry for low zoom level display
+        if (this.options.enableSimplification) {
+          const simplifiedMultiPolygonGeometry =
+            this.createSimplifiedMultiPolygonGeometry(finalGeometry);
+          if (simplifiedMultiPolygonGeometry) {
+            const simplifiedGeometryIRI = `${aggregatedZoneIRI}_simplified`;
+            triples.push(
+              this.createTriple(
+                simplifiedGeometryIRI,
+                `${RDF_PREFIXES.rdf}type`,
+                `${RDF_PREFIXES.geo}Geometry`
+              ),
+              this.createTriple(
+                aggregatedZoneIRI,
+                `${RDF_PREFIXES.geo}hasSimplifiedGeometry`,
+                simplifiedGeometryIRI
+              ),
+              this.createTriple(
+                simplifiedGeometryIRI,
+                `${RDF_PREFIXES.geo}asWKT`,
+                this.createWKTLiteral(simplifiedMultiPolygonGeometry)
+              ),
+              this.createTriple(
+                simplifiedGeometryIRI,
+                `${this.options.baseUri}simplificationTolerance`,
+                this.createDoubleLiteral(
+                  this.options.simplificationTolerance || 0.01
+                )
+              )
+            );
+          }
+        }
+
+        // Add properties and metadata
+        if (this.options.useMinimalFloodProperties) {
+          this.addMinimalFloodProperties(
+            triples,
+            aggregatedZoneIRI,
+            zone.hazardType,
+            zone.rankCode
+          );
+        } else {
+          const riverIRI = generateRiverIRI(baseUri, zone.riverId);
+          this.addFullFloodProperties(
+            triples,
+            aggregatedZoneIRI,
+            riverIRI,
+            zone.riverId,
+            zone.riverName,
+            zone.hazardType,
+            zone.rankCode
           );
         }
-      }
-
-      // Add properties based on configuration
-      if (this.options.useMinimalFloodProperties) {
-        this.addMinimalFloodProperties(
-          triples,
-          aggregatedZoneIRI,
-          zone.hazardType,
-          zone.rankCode
+        triples.push(
+          this.createTriple(
+            aggregatedZoneIRI,
+            `${MLIT_PREDICATES.hazardType}_polygonCount`,
+            this.createIntegerLiteral(zone.polygons.length)
+          ),
+          this.createTriple(
+            aggregatedZoneIRI,
+            `${MLIT_PREDICATES.hazardType}_clusterId`,
+            this.createIntegerLiteral(zone.clusterId)
+          )
         );
-      } else {
-        const riverIRI = generateRiverIRI(baseUri, zone.riverId);
-        this.addFullFloodProperties(
-          triples,
-          aggregatedZoneIRI,
-          riverIRI,
-          zone.riverId,
-          zone.riverName,
-          zone.hazardType,
-          zone.rankCode
+      } catch (e: any) {
+        this.logger.error(
+          `[DEBUG] CRITICAL: Union failed for zone ${zone.clusterId}. Error: ${e.message}`
         );
+        // 問題のあるデータを特定するための詳細ログ
+        this.logger.error(`[DEBUG] Problematic zone ${zone.clusterId} details:`);
+        this.logger.error(`  Input polygons (featuresToUnion): ${JSON.stringify(featuresToUnion.map((f: any) => f.geometry))}`);
+        // unionedFeature が null の可能性があるのでチェック
+        if (unionedFeature) {
+          this.logger.error(`  Unioned feature (unionedFeature): ${JSON.stringify(unionedFeature.geometry)}`);
+        } else {
+          this.logger.error(`  Unioned feature (unionedFeature): null (union operation failed to produce a feature)`);
+        }
+        // wktMultiPolygon が定義されているかチェック
+        if (typeof wktMultiPolygon !== 'undefined') {
+          this.logger.error(`  Generated WKT (wktMultiPolygon): ${wktMultiPolygon}`);
+        } else {
+          this.logger.error(`  Generated WKT (wktMultiPolygon): not generated due to earlier error`);
+        }
+        // Skip this entire zone if union fails, to prevent corrupt data
+        // continue;
       }
-
-      // Add aggregation metadata
-      triples.push(
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${MLIT_PREDICATES.hazardType}_polygonCount`,
-          this.createIntegerLiteral(zone.polygons.length)
-        ),
-        this.createTriple(
-          aggregatedZoneIRI,
-          `${MLIT_PREDICATES.hazardType}_clusterId`,
-          this.createIntegerLiteral(zone.clusterId)
-        )
-      );
     }
 
     return {
@@ -1482,7 +1557,10 @@ export class GeoSPARQLTransformer {
   /**
    * Create simplified geometry triples for a single feature (for low zoom levels)
    */
-  private createSimplifiedGeometryForFeature(feature: GeoJSONFeature, featureIRI: string): RDFTriple[] {
+  private createSimplifiedGeometryForFeature(
+    feature: GeoJSONFeature,
+    featureIRI: string
+  ): RDFTriple[] {
     const triples: RDFTriple[] = [];
     const simplifiedGeometryIRI = `${featureIRI}_simplified`;
 
@@ -1541,13 +1619,16 @@ export class GeoSPARQLTransformer {
       const highQuality = this.options.simplificationHighQuality || false;
 
       // Create a proper GeoJSON feature for Turf.js
-      const turfFeature = turf.feature(feature.geometry as any, feature.properties);
-      
+      const turfFeature = turf.feature(
+        feature.geometry as any,
+        feature.properties
+      );
+
       // Simplify the geometry
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false
+        mutate: false,
       });
 
       if (!simplified || !simplified.geometry) {
@@ -1556,9 +1637,11 @@ export class GeoSPARQLTransformer {
       }
 
       // Transform coordinates and convert to WKT
-      const transformedGeometry = this.transformCoordinates(simplified.geometry);
+      const transformedGeometry = this.transformCoordinates(
+        simplified.geometry
+      );
       const wkt = wellknown.stringify(transformedGeometry);
-      
+
       return wkt;
     } catch (error) {
       this.logger?.error('Error creating simplified geometry:', error);
@@ -1569,7 +1652,9 @@ export class GeoSPARQLTransformer {
   /**
    * Create simplified MultiPolygon geometry
    */
-  private createSimplifiedMultiPolygonGeometry(multiPolygonGeometry: any): string | null {
+  private createSimplifiedMultiPolygonGeometry(
+    multiPolygonGeometry: any
+  ): string | null {
     try {
       if (!this.options.enableSimplification) {
         return null;
@@ -1580,26 +1665,33 @@ export class GeoSPARQLTransformer {
 
       // Create a proper GeoJSON feature for Turf.js
       const turfFeature = turf.feature(multiPolygonGeometry as any);
-      
+
       // Simplify the geometry
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false
+        mutate: false,
       });
 
       if (!simplified || !simplified.geometry) {
-        this.logger?.warn('Failed to simplify MultiPolygon geometry - no result');
+        this.logger?.warn(
+          'Failed to simplify MultiPolygon geometry - no result'
+        );
         return null;
       }
 
       // Transform coordinates and convert to WKT
-      const transformedGeometry = this.transformCoordinates(simplified.geometry);
+      const transformedGeometry = this.transformCoordinates(
+        simplified.geometry
+      );
       const wkt = wellknown.stringify(transformedGeometry);
-      
+
       return wkt;
     } catch (error) {
-      this.logger?.error('Error creating simplified MultiPolygon geometry:', error);
+      this.logger?.error(
+        'Error creating simplified MultiPolygon geometry:',
+        error
+      );
       return null;
     }
   }
