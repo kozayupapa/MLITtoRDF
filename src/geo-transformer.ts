@@ -1261,10 +1261,32 @@ export class GeoSPARQLTransformer {
     for (const zone of aggregatedZones) {
       if (zone.polygons.length === 0) continue;
 
-      // Create MultiPolygon geometry
+      // Clean and simplify each polygon before creating the MultiPolygon
+      const cleanedPolygonCoordinates = zone.polygons.map(p => {
+        try {
+          if (p && p.coordinates && p.coordinates[0] && p.coordinates[0].length >= 4) {
+            const feature = turf.polygon(p.coordinates);
+            // Clean the coordinates first to remove redundant nodes
+            const cleaned = turf.cleanCoords(feature);
+            // Then simplify. A small tolerance helps fix minor topology issues.
+            const simplified = turf.simplify(cleaned, { tolerance: 0.00001, highQuality: false });
+            return simplified.geometry.coordinates;
+          }
+        } catch (err: any) {
+          this.logger.warn(`Could not process a polygon for river ${zone.riverId}: ${err.message}`);
+        }
+        return null; // Return null for invalid or problematic polygons
+      }).filter(coords => coords !== null) as any[]; // Filter out any nulls
+
+      if (cleanedPolygonCoordinates.length === 0) {
+        this.logger.warn(`No valid polygons remained after cleaning for river ${zone.riverId}, rank ${zone.rankCode}.`);
+        continue;
+      }
+
+      // Create MultiPolygon geometry from the cleaned coordinates
       const multiPolygonGeometry = {
         type: 'MultiPolygon',
-        coordinates: zone.polygons.map((polygon) => polygon.coordinates),
+        coordinates: cleanedPolygonCoordinates,
       };
 
       // Generate unique IRI for aggregated zone with cluster ID
@@ -1327,7 +1349,7 @@ export class GeoSPARQLTransformer {
       );
 
       // Calculate and add bounding box
-      const boundingBox = this.calculateBoundingBox(zone.polygons);
+      const boundingBox = this.calculateBoundingBox(multiPolygonGeometry);
       triples.push(
         this.createTriple(
           boundingBoxIRI,
@@ -1585,23 +1607,9 @@ export class GeoSPARQLTransformer {
   /**
    * Calculate bounding box for multiple polygons
    */
-  private calculateBoundingBox(polygons: any[]): string {
-    let minLng = Infinity;
-    let maxLng = -Infinity;
-    let minLat = Infinity;
-    let maxLat = -Infinity;
-
-    for (const polygon of polygons) {
-      if (polygon.coordinates && polygon.coordinates[0]) {
-        for (const coordinate of polygon.coordinates[0]) {
-          const [lng, lat] = coordinate;
-          minLng = Math.min(minLng, lng);
-          maxLng = Math.max(maxLng, lng);
-          minLat = Math.min(minLat, lat);
-          maxLat = Math.max(maxLat, lat);
-        }
-      }
-    }
+  private calculateBoundingBox(geometry: any): string {
+    const bbox = turf.bbox(geometry);
+    const [minLng, minLat, maxLng, maxLat] = bbox;
 
     // Transform bounding box coordinates from JGD2011 to WGS84
     const transformedMin = proj4('JGD2011', 'WGS84', [minLng, minLat]);
