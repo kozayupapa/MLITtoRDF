@@ -4,213 +4,129 @@
  * Simple and debuggable approach for processing multiple files sequentially
  */
 
-import * as fs from 'fs';
-import { createLogger, Logger } from 'winston';
+import { createReadStream, readFileSync } from 'fs';
+import { Logger } from 'winston';
+import { parser } from 'stream-json';
+import { pick } from 'stream-json/filters/Pick';
+import { streamArray } from 'stream-json/streamers/StreamArray';
 
+// GeoJSON type definitions
 export interface GeoJSONFeature {
   type: 'Feature';
-  properties: {
-    MESH_ID?: string;
-    メッシュ?: string;
-    SHICODE?: string;
-    PTN_2020?: number;
-    [key: string]: any;
-  };
-  geometry: {
-    type: string;
-    coordinates: any;
-  };
+  geometry: any;
+  properties: any;
 }
 
-export interface ParsedFeatureData {
-  feature: GeoJSONFeature;
-  featureIndex: number;
-  filePath: string;
-  fileIndex: number;
+export interface GeoJSONFeatureCollection {
+  type: 'FeatureCollection';
+  features: GeoJSONFeature[];
 }
 
 export interface ParserOptions {
-  inputFilePaths: string[];
   logger?: Logger;
-  maxFeatures?: number;
-  skipFeatures?: number;
 }
 
 /**
- * Synchronous GeoJSON parser for processing multiple files sequentially
- * Simple and debuggable approach
+ * Parses GeoJSON files, with support for streaming large files.
  */
-export class GeoJSONSyncParser {
-  private readonly options: ParserOptions;
+export class GeoJSONParser {
   private readonly logger: Logger;
-  private totalFeatureCount: number = 0;
-  private processedCount: number = 0;
 
-  constructor(options: ParserOptions) {
-    this.options = options;
-    this.logger =
-      options.logger ||
-      createLogger({
-        level: 'info',
-        format: require('winston').format.simple(),
-        transports: [new (require('winston').transports.Console)()],
-      });
+  constructor(options: ParserOptions = {}) {
+    this.logger = options.logger || (console as any);
   }
 
   /**
-   * Parse multiple GeoJSON files synchronously and return all features
+   * Determines the structure of the GeoJSON file (FeatureCollection, Feature, or array of Features).
+   * This is a lightweight check on the first few KB of the file.
    */
-  public parseAllFeatures(): ParsedFeatureData[] {
-    const { inputFilePaths, maxFeatures, skipFeatures = 0 } = this.options;
-    const allFeatures: ParsedFeatureData[] = [];
+  private detectGeoJSONStructure(filePath: string): 'FeatureCollection' | 'Feature' | 'FeatureArray' {
+    // This is a simplified detection logic. A more robust implementation might be needed.
+    const buffer = Buffer.alloc(4096);
+    const fd = require('fs').openSync(filePath, 'r');
+    require('fs').readSync(fd, buffer, 0, 4096, 0);
+    require('fs').closeSync(fd);
+    const text = buffer.toString('utf-8');
 
-    this.logger.info(
-      `Starting to parse ${inputFilePaths.length} GeoJSON files`
-    );
-    this.logger.info(
-      `Skip features: ${skipFeatures}, Max features: ${
-        maxFeatures || 'unlimited'
-      }`
-    );
-
-    for (let fileIndex = 0; fileIndex < inputFilePaths.length; fileIndex++) {
-      const filePath = inputFilePaths[fileIndex];
-
-      this.logger.info(
-        `Processing file ${fileIndex + 1}/${inputFilePaths.length}: ${filePath}`
-      );
-
-      if (!fs.existsSync(filePath)) {
-        this.logger.warn(`Input file does not exist: ${filePath}`);
-        continue;
+    if (text.includes('"type": "FeatureCollection"')) {
+      return 'FeatureCollection';
+    } else if (text.includes('"type": "Feature"')) {
+      // This could be a single Feature or the start of a FeatureArray
+      // A simple check for a top-level `[` can differentiate
+      if (text.trim().startsWith('[')) {
+        return 'FeatureArray';
       }
+      return 'Feature';
+    }
+    return 'FeatureCollection'; // Default assumption
+  }
 
-      try {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
-        const geoJSON = JSON.parse(fileContent);
+  /**
+   * Parses features from a GeoJSON file using streaming for efficiency.
+   * Handles both FeatureCollection and top-level arrays of Features.
+   * @param filePath The path to the GeoJSON file.
+   * @param skip The number of features to skip.
+   * @param limit The maximum number of features to return.
+   * @returns A promise that resolves to an array of GeoJSON features.
+   */
+  public async parseFeatures(
+    filePath: string,
+    skip: number,
+    limit: number
+  ): Promise<GeoJSONFeature[]> {
+    const structure = this.detectGeoJSONStructure(filePath);
 
-        if (!geoJSON.features || !Array.isArray(geoJSON.features)) {
-          this.logger.warn(
-            `File ${filePath} does not contain valid GeoJSON features array`
-          );
-          continue;
-        }
-
-        for (
-          let featureIndex = 0;
-          featureIndex < geoJSON.features.length;
-          featureIndex++
-        ) {
-          const feature = geoJSON.features[featureIndex];
-
-          // Validate that this is a valid GeoJSON feature
-          if (!this.isValidGeoJSONFeature(feature)) {
-            this.logger.warn(
-              `Skipping invalid GeoJSON feature at index ${featureIndex} in file ${filePath}`
-            );
-            continue;
-          }
-
-          this.totalFeatureCount++;
-
-          // Skip features if requested
-          if (this.totalFeatureCount <= skipFeatures) {
-            continue;
-          }
-
-          // Check max features limit
-          if (maxFeatures && this.processedCount >= maxFeatures) {
-            this.logger.info(`Reached max features limit: ${maxFeatures}`);
-            return allFeatures;
-          }
-
-          this.processedCount++;
-
-          // Log progress periodically
-          if (this.processedCount % 1000 === 0) {
-            this.logger.info(`Processed ${this.processedCount} features...`);
-          }
-
-          const parsedData: ParsedFeatureData = {
-            feature: feature as GeoJSONFeature,
-            featureIndex,
-            filePath,
-            fileIndex,
-          };
-
-          allFeatures.push(parsedData);
-        }
-
-        this.logger.info(
-          `Completed file ${filePath}: ${geoJSON.features.length} features found`
-        );
-      } catch (error) {
-        this.logger.error(`Error processing file ${filePath}:`, error);
-      }
+    if (structure === 'Feature') {
+      this.logger.info('Detected single GeoJSON Feature structure.');
+      const fileContent = readFileSync(filePath, 'utf-8');
+      const feature = JSON.parse(fileContent);
+      return [feature].slice(skip, skip + limit);
     }
 
-    this.logger.info(
-      `Completed parsing all files. Total features processed: ${this.processedCount}`
-    );
+    return new Promise((resolve, reject) => {
+      const features: GeoJSONFeature[] = [];
+      let count = 0;
+      let stream;
 
-    return allFeatures;
+      if (structure === 'FeatureCollection') {
+        this.logger.info('Detected FeatureCollection structure. Streaming features.');
+        stream = createReadStream(filePath)
+          .pipe(parser())
+          .pipe(pick({ filter: 'features' }))
+          .pipe(streamArray());
+      } else { // FeatureArray
+        this.logger.info('Detected top-level Feature array structure. Streaming features.');
+        stream = createReadStream(filePath)
+          .pipe(parser())
+          .pipe(streamArray());
+      }
+
+      stream.on('data', (data: any) => {
+        if (count >= skip) {
+          if (features.length < limit) {
+            features.push(data.value as GeoJSONFeature);
+          }
+        }
+        count++;
+        if (limit !== Infinity && features.length >= limit) {
+          stream.destroy(); // Stop reading from the file if limit is reached
+        }
+      });
+
+      stream.on('end', () => {
+        this.logger.info(`Stream parsing completed. Found ${features.length} features.`);
+        resolve(features);
+      });
+
+      stream.on('error', (err: Error) => {
+        this.logger.error(`Error streaming JSON from ${filePath}: ${err.message}`);
+        reject(err);
+      });
+
+      stream.on('close', () => {
+        // Ensure resolution in case the stream was destroyed after reaching the limit
+        resolve(features);
+      });
+    });
   }
-
-  /**
-   * Validate that an object is a valid GeoJSON feature
-   */
-  private isValidGeoJSONFeature(obj: any): obj is GeoJSONFeature {
-    return (
-      obj &&
-      typeof obj === 'object' &&
-      obj.type === 'Feature' &&
-      obj.properties &&
-      typeof obj.properties === 'object' &&
-      obj.geometry &&
-      typeof obj.geometry === 'object' &&
-      typeof obj.geometry.type === 'string' &&
-      obj.geometry.coordinates
-    );
-  }
-
-  /**
-   * Get current parsing statistics
-   */
-  public getStats(): { totalFeatureCount: number; processedCount: number } {
-    return {
-      totalFeatureCount: this.totalFeatureCount,
-      processedCount: this.processedCount,
-    };
-  }
-}
-
-/**
- * Utility function to create a parser with default configuration
- */
-export function createGeoJSONParser(
-  filePaths: string[],
-  options: Partial<ParserOptions> = {}
-): GeoJSONSyncParser {
-  return new GeoJSONSyncParser({
-    inputFilePaths: filePaths,
-    ...options,
-  });
-}
-
-/**
- * Helper to parse a limited number of features for testing
- */
-export function parseGeoJSONSample(
-  filePaths: string[],
-  sampleSize: number = 10,
-  logger?: Logger
-): GeoJSONFeature[] {
-  const parser = new GeoJSONSyncParser({
-    inputFilePaths: filePaths,
-    maxFeatures: sampleSize,
-    logger,
-  });
-
-  const parsedData = parser.parseAllFeatures();
-  return parsedData.map((data) => data.feature);
 }

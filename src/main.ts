@@ -8,11 +8,9 @@
 import { Command } from 'commander';
 import { createLogger, format, transports } from 'winston';
 import * as fs from 'fs';
-import { GeoJSONSyncParser } from './data-parser';
+import { GeoJSONParser } from './data-parser';
 import {
   GeoSPARQLTransformer,
-  RDFTriple,
-  TransformationResult,
 } from './geo-transformer';
 import { RDF4JBulkLoader, LoadResult } from './rdf-loader';
 
@@ -263,347 +261,87 @@ class MLITGeoJSONToRDF4J {
   }
 
   /**
-   * Main data processing pipeline - Memory-efficient sequential processing
+   * Main data processing pipeline
    */
   private async processData(
     loader: RDF4JBulkLoader
   ): Promise<LoadResult | null> {
-    this.logger.info(
-      'Starting memory-efficient sequential data processing pipeline...'
-    );
+    this.logger.info('Starting data processing pipeline...');
 
-    let totalProcessedFeatures = 0;
-    let totalTransformationErrors = 0;
-    let totalTriples = 0;
-    let totalBatches = 0;
-    let totalTime = 0;
+    let totalUploadedTriples = 0;
     const allErrors: string[] = [];
 
     try {
-      // Process files one by one to avoid memory issues
-      for (
-        let fileIndex = 0;
-        fileIndex < this.options.filePaths.length;
-        fileIndex++
-      ) {
-        const filePath = this.options.filePaths[fileIndex];
-        this.logger.info(
-          `Processing file ${fileIndex + 1}/${
-            this.options.filePaths.length
-          }: ${filePath}`
-        );
-
-        const fileResult = await this.processFileSequentially(
-          filePath,
-          loader,
-          totalProcessedFeatures
-        );
-
-        // Accumulate results
-        totalProcessedFeatures += fileResult.processedFeatures;
-        totalTransformationErrors += fileResult.transformationErrors;
-        totalTriples += fileResult.uploadedTriples;
-        totalBatches += fileResult.batches;
-        totalTime += fileResult.uploadTime;
-        allErrors.push(...fileResult.errors);
-
-        this.logger.info(
-          `File ${fileIndex + 1} completed: ${
-            fileResult.processedFeatures
-          } features, ${fileResult.uploadedTriples} triples`
-        );
-
-        // Force garbage collection hint
-        if (global.gc) {
-          global.gc();
+      for (const filePath of this.options.filePaths) {
+        const fileResult = await this.processFile(filePath, loader);
+        totalUploadedTriples += fileResult.uploadedTriples;
+        if (fileResult.error) {
+          allErrors.push(fileResult.error);
         }
       }
 
       this.logger.info(
-        `All files processed. Total: ${totalProcessedFeatures} features, ${totalTriples} triples, ${totalTransformationErrors} errors`
+        `All files processed. Total triples uploaded: ${totalUploadedTriples}`
       );
 
-      if (totalTransformationErrors > 0) {
-        this.logger.warn(
-          `${totalTransformationErrors} features failed transformation across all files`
-        );
-      }
-
       return {
-        totalTriples,
-        totalBatches,
-        totalTime,
-        averageBatchTime: totalBatches > 0 ? totalTime / totalBatches : 0,
+        totalTriples: totalUploadedTriples,
+        totalBatches: this.options.filePaths.length, // Consider each file as a batch
+        totalTime: 0, // Timing is now per-file, this could be aggregated if needed
+        averageBatchTime: 0,
         errors: allErrors,
       };
-    } catch (error) {
-      this.logger.error('Sequential data processing error:', error);
+    } catch (error: any) {
+      this.logger.error('Data processing pipeline failed:', error);
       throw error;
     }
   }
 
   /**
-   * Process a single file with parse -> transform -> load pipeline
+   * Process a single file: Parse -> Transform -> Load
    */
-  private async processFileSequentially(
+  private async processFile(
     filePath: string,
-    loader: RDF4JBulkLoader,
-    globalFeatureOffset: number
-  ): Promise<{
-    processedFeatures: number;
-    transformationErrors: number;
-    uploadedTriples: number;
-    batches: number;
-    uploadTime: number;
-    errors: string[];
-  }> {
-    const errors: string[] = [];
-
+    loader: RDF4JBulkLoader
+  ): Promise<{ uploadedTriples: number; error?: string }> {
+    this.logger.info(`Processing file: ${filePath}`);
     try {
-      // Create file-specific transformer with path context
       const transformer = this.createTransformer(filePath);
+      const parser = new GeoJSONParser({ logger: this.logger });
 
-      // Create a single-file parser
-      const singleFileParser = new GeoJSONSyncParser({
-        inputFilePaths: [filePath],
-        maxFeatures: this.options.maxFeatures,
-        skipFeatures: this.options.skipFeatures,
-        logger: this.logger,
-      });
-
-      // Parse features from this file only
-      const parsedFeatures = singleFileParser.parseAllFeatures();
-      this.logger.info(
-        `Parsed ${parsedFeatures.length} features from ${filePath}`
-      );
-
-      if (parsedFeatures.length === 0) {
-        this.logger.warn(`No valid features found in ${filePath}`);
-        return {
-          processedFeatures: 0,
-          transformationErrors: 0,
-          uploadedTriples: 0,
-          batches: 0,
-          uploadTime: 0,
-          errors: [],
-        };
-      }
-
-      // Transform features in this batch using abstracted processing
-      const result = this.processFeatures(
-        parsedFeatures,
-        transformer,
+      const features = await parser.parseFeatures(
         filePath,
-        loader,
-        globalFeatureOffset
-      );
-      return result;
-    } catch (error) {
-      const errorMsg = `Error processing file ${filePath}: ${error}`;
-      this.logger.error(errorMsg);
-      errors.push(errorMsg);
-      return {
-        processedFeatures: 0,
-        transformationErrors: 0,
-        uploadedTriples: 0,
-        batches: 0,
-        uploadTime: 0,
-        errors,
-      };
-    }
-  }
-
-  /**
-   * Utility function to split array into chunks
-   */
-  /**
-   * Abstracted feature batch processing with data type branching
-   */
-  private async processFeatures(
-    parsedFeatures: any[],
-    transformer: GeoSPARQLTransformer,
-    filePath: string,
-    loader: RDF4JBulkLoader,
-    globalFeatureOffset: number
-  ): Promise<{
-    processedFeatures: number;
-    transformationErrors: number;
-    uploadedTriples: number;
-    batches: number;
-    uploadTime: number;
-    errors: string[];
-  }> {
-    const triples: RDFTriple[] = [];
-    let processedCount = 0;
-    let errorCount = 0;
-    let processedFeatures = 0;
-    let transformationErrors = 0;
-    let uploadedTriples = 0;
-    let batches = 0;
-    let uploadTime = 0;
-    const errors: string[] = [];
-
-    // Determine processing mode based on data type and options
-    if (this.shouldUseAggregatedProcessing(parsedFeatures)) {
-      // Use aggregated processing for flood hazard data
-      const features = parsedFeatures.map((data) => data.feature);
-      const result = transformer.transformFeatures(features);
-      triples.push(...result.triples);
-      processedFeatures = parsedFeatures.length;
-      batches = 1;
-      this.logger.info(
-        `Aggregated ${parsedFeatures.length} flood hazard features into ${result.floodHazardZoneIRIs.length} zones`
+        this.options.skipFeatures || 0,
+        this.options.maxFeatures || Infinity
       );
 
-      // Continue proces        // Upload this batch to RDF4J if we have triples
+      if (features.length === 0) {
+        this.logger.warn(`No features found or parsed in ${filePath}.`);
+        return { uploadedTriples: 0 };
+      }
+
+      this.logger.info(`Transforming ${features.length} features from ${filePath}...`);
+      const transformationResult = transformer.transformFeatures(features);
+      const triples = transformationResult.triples;
+
+      this.logger.info(`Generated ${triples.length} triples.`);
+
       if (triples.length > 0 && !this.options.dryRun) {
-        try {
-          const startTime = Date.now();
-          await loader.loadTriples(triples);
-          const batchTime = Date.now() - startTime;
-
-          uploadedTriples += triples.length;
-          uploadTime += batchTime;
-
-          this.logger.info(
-            `Uploaded aggregated: ${triples.length} triples in ${batchTime}ms`
-          );
-        } catch (error) {
-          const errorMsg = `Failed to upload aggregated from ${filePath}: ${error}`;
-          this.logger.error(errorMsg);
-          transformationErrors++;
-          errors.push(errorMsg);
-        }
+        this.logger.info(`Uploading ${triples.length} triples to RDF4J...`);
+        await loader.loadTriples(triples);
+        this.logger.info(`Successfully uploaded triples from ${filePath}.`);
+        return { uploadedTriples: triples.length };
       } else if (triples.length > 0 && this.options.dryRun) {
-        uploadedTriples += triples.length;
-        this.logger.info(
-          `Dry run: would upload aggregated ${triples.length} triples`
-        );
+        this.logger.info(`[Dry Run] Would have uploaded ${triples.length} triples.`);
+        return { uploadedTriples: triples.length };
       }
-    } else {
-      // Process features in smaller batches to control memory usage
-      const batchSize = Math.min(this.options.batchSize, 500); // Limit batch size for memory
-      const featureBatches = this.chunkArray(parsedFeatures, batchSize);
 
-      for (
-        let batchIndex = 0;
-        batchIndex < featureBatches.length;
-        batchIndex++
-      ) {
-        const featureBatch = featureBatches[batchIndex];
-        const batchTriples: RDFTriple[] = [];
-
-        this.logger.info(
-          `Processing batch ${batchIndex + 1}/${featureBatches.length} (${
-            featureBatch.length
-          } features) from ${filePath}`
-        );
-
-        // Use individual feature processing (legacy mode)
-        for (const data of featureBatch) {
-          try {
-            const result: TransformationResult = transformer.transformFeature(
-              data.feature
-            );
-            triples.push(...result.triples);
-            processedCount++;
-          } catch (error) {
-            errorCount++;
-            const errorMsg = `Failed to transform feature ${data.featureIndex} from file ${data.filePath}: ${error}`;
-            this.logger.error(errorMsg);
-            errors.push(errorMsg);
-          }
-        }
-        const batchResult = {
-          triples,
-          processedCount,
-          errorCount,
-          errors,
-        };
-        batchTriples.push(...batchResult.triples);
-        processedFeatures += batchResult.processedCount;
-        transformationErrors += batchResult.errorCount;
-        errors.push(...batchResult.errors);
-
-        // Log progress periodically
-        if ((globalFeatureOffset + processedFeatures) % 1000 === 0) {
-          this.logger.info(
-            `Transformed ${
-              globalFeatureOffset + processedFeatures
-            } total features`
-          );
-        }
-
-        // Continue processing unless too many errors
-        if (transformationErrors > 100) {
-          throw new Error(
-            `Too many transformation errors (${transformationErrors}), aborting file ${filePath}`
-          );
-        }
-
-        // Upload this batch to RDF4J if we have triples
-        if (batchTriples.length > 0 && !this.options.dryRun) {
-          try {
-            const startTime = Date.now();
-            await loader.loadTriples(batchTriples);
-            const batchTime = Date.now() - startTime;
-
-            uploadedTriples += batchTriples.length;
-            batches++;
-            uploadTime += batchTime;
-
-            this.logger.info(
-              `Uploaded batch ${batchIndex + 1}: ${
-                batchTriples.length
-              } triples in ${batchTime}ms`
-            );
-          } catch (error) {
-            const errorMsg = `Failed to upload batch ${
-              batchIndex + 1
-            } from ${filePath}: ${error}`;
-            this.logger.error(errorMsg);
-            errors.push(errorMsg);
-          }
-        } else if (batchTriples.length > 0 && this.options.dryRun) {
-          uploadedTriples += batchTriples.length;
-          this.logger.info(
-            `Dry run: would upload ${batchTriples.length} triples`
-          );
-        }
-
-        // Clear batch data to free memory
-        batchTriples.length = 0;
-      }
+      return { uploadedTriples: 0 };
+    } catch (error: any) {
+      const errorMessage = `Failed to process file ${filePath}: ${error.message}`;
+      this.logger.error(errorMessage, error.stack);
+      return { uploadedTriples: 0, error: errorMessage };
     }
-
-    return {
-      processedFeatures,
-      transformationErrors,
-      uploadedTriples,
-      batches,
-      uploadTime,
-      errors,
-    };
-  }
-
-  /**
-   * Determine if aggregated processing should be used
-   */
-  private shouldUseAggregatedProcessing(featureBatch: any[]): boolean {
-    // Check if batch contains flood hazard data
-    if (featureBatch.length === 0) {
-      return false;
-    }
-
-    return this.options.aggregateByRank;
-  }
-
-  private chunkArray<T>(array: T[], chunkSize: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < array.length; i += chunkSize) {
-      chunks.push(array.slice(i, i + chunkSize));
-    }
-    return chunks;
   }
 
   /**
