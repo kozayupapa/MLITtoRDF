@@ -681,10 +681,6 @@ export class GeoSPARQLTransformer {
       // Convert to WKT
       const wkt = wellknown.stringify(transformedGeometry);
 
-      // --- DEBUG LOGGING START ---
-      this.logger.info(`[DEBUG] Generated WKT: ${wkt}`);
-      // --- DEBUG LOGGING END ---
-
       return wkt;
     } catch (error) {
       this.logger.error('Error transforming geometry:', error);
@@ -1286,10 +1282,6 @@ export class GeoSPARQLTransformer {
       const geometryIRI = `${aggregatedZoneIRI}_geom`;
       const boundingBoxIRI = `${aggregatedZoneIRI}_bbox`;
 
-      this.logger.info(
-        `[DEBUG] Processing zone: river ${zone.riverId}, rank ${zone.rankCode}, cluster ${zone.clusterId} with ${zone.polygons.length} input polygons.`
-      );
-
       let featuresToUnion: Feature<Polygon>[] = [];
       let unionedFeature: Feature<GeoJSON.Geometry> | null = null;
       let wktMultiPolygon: string | undefined = undefined;
@@ -1305,7 +1297,9 @@ export class GeoSPARQLTransformer {
                 p.coordinates.length > 0 &&
                 p.coordinates[0].length >= 4
               ) {
-                const feature = turf.polygon(p.coordinates as any) as Feature<Polygon>;
+                const feature = turf.polygon(
+                  p.coordinates as any
+                ) as Feature<Polygon>;
                 const cleaned = turf.cleanCoords(feature);
 
                 // Add detailed logging for area check
@@ -1327,10 +1321,6 @@ export class GeoSPARQLTransformer {
           })
           .filter((p): p is Feature<Polygon> => p !== null);
 
-        this.logger.info(
-          `[DEBUG] Zone ${zone.clusterId} has ${featuresToUnion.length} valid, non-zero-area polygons to be unioned.`
-        );
-
         if (featuresToUnion.length === 0) {
           this.logger.warn(
             `No valid polygons to aggregate for river ${zone.riverId}, rank ${zone.rankCode}, cluster ${zone.clusterId}`
@@ -1340,9 +1330,6 @@ export class GeoSPARQLTransformer {
 
         // 2. Perform the geometric union
         if (featuresToUnion.length > 1) {
-          this.logger.info(
-            `[DEBUG] Attempting to union ${featuresToUnion.length} polygons for zone ${zone.clusterId}.`
-          );
           // @ts-ignore - Suppress spread operator type error which is a known issue with Turf's complex function overloads
           unionedFeature = turf.union(turf.featureCollection(featuresToUnion));
         } else {
@@ -1368,7 +1355,9 @@ export class GeoSPARQLTransformer {
 
         // 1. turf.rewind を適用してリングの向きを標準化
         try {
-          processedGeometry = turf.rewind(finalGeometry as any, { reverse: false }) as GeoJSON.Geometry; // GeoJSON標準の右手法則 (時計回りの外部リング、反時計回りの内部リング)
+          processedGeometry = turf.rewind(finalGeometry as any, {
+            reverse: false,
+          }) as GeoJSON.Geometry; // GeoJSON標準の右手法則 (時計回りの外部リング、反時計回りの内部リング)
         } catch (rewindError: any) {
           this.logger.warn(
             `[DEBUG] Rewind failed for zone ${zone.clusterId}. Error: ${rewindError.message}. Using original geometry.`
@@ -1378,14 +1367,48 @@ export class GeoSPARQLTransformer {
 
         // 2. ジオメトリの有効性をチェック
         // @ts-ignore
-        const isValid = turf.booleanValid(processedGeometry as any);
+        let isValid = turf.booleanValid(processedGeometry as any); // Use let because we might re-assign
         if (!isValid) {
           this.logger.warn(
-            `[DEBUG] WARNING: Invalid geometry detected for zone ${zone.clusterId} after union and rewind. Attempting to process despite invalidity.`
+            `[DEBUG] WARNING: Invalid geometry detected for zone ${zone.clusterId} after union and rewind. Attempting to repair.`
           );
           // @ts-ignore
-          this.logger.warn(`  Invalid Geometry WKT: ${wellknown.stringify(processedGeometry)}`);
-          // 無効なジオメトリの場合でも処理を続行
+          //this.logger.warn(`  Original Invalid Geometry WKT: ${wellknown.stringify(processedGeometry)}`);
+
+          try {
+            // Attempt to repair the geometry using a small buffer trick
+            const buffered = turf.buffer(processedGeometry as any, 0.0000001, {
+              units: 'degrees',
+            });
+            const unbuffered = turf.buffer(buffered as any, -0.0000001, {
+              units: 'degrees',
+            });
+
+            // Ensure the unbuffered result is a valid geometry type
+            if (unbuffered && unbuffered.geometry) {
+              processedGeometry = unbuffered.geometry as GeoJSON.Geometry;
+              // Re-check validity after repair
+              // @ts-ignore
+              isValid = turf.booleanValid(processedGeometry as any);
+              if (isValid) {
+                this.logger.info(
+                  `[DEBUG] Geometry for zone ${zone.clusterId} successfully repaired.`
+                );
+              } else {
+                this.logger.warn(
+                  `[DEBUG] Geometry for zone ${zone.clusterId} remains invalid after repair attempt.`
+                );
+              }
+            } else {
+              this.logger.warn(
+                `[DEBUG] Geometry repair for zone ${zone.clusterId} failed to produce a valid geometry object.`
+              );
+            }
+          } catch (repairError: any) {
+            this.logger.error(
+              `[DEBUG] Error during geometry repair for zone ${zone.clusterId}: ${repairError.message}`
+            );
+          }
         }
         // --- ジオメトリの検証と修正 終わり ---
 
@@ -1480,19 +1503,35 @@ export class GeoSPARQLTransformer {
           `[DEBUG] CRITICAL: Union failed for zone ${zone.clusterId}. Error: ${e.message}`
         );
         // 問題のあるデータを特定するための詳細ログ
-        this.logger.error(`[DEBUG] Problematic zone ${zone.clusterId} details:`);
-        this.logger.error(`  Input polygons (featuresToUnion): ${JSON.stringify(featuresToUnion.map((f: any) => f.geometry))}`);
+        this.logger.error(
+          `[DEBUG] Problematic zone ${zone.clusterId} details:`
+        );
+        this.logger.error(
+          `  Input polygons (featuresToUnion): ${JSON.stringify(
+            featuresToUnion.map((f: any) => f.geometry)
+          )}`
+        );
         // unionedFeature が null の可能性があるのでチェック
         if (unionedFeature) {
-          this.logger.error(`  Unioned feature (unionedFeature): ${JSON.stringify(unionedFeature.geometry)}`);
+          this.logger.error(
+            `  Unioned feature (unionedFeature): ${JSON.stringify(
+              unionedFeature.geometry
+            )}`
+          );
         } else {
-          this.logger.error(`  Unioned feature (unionedFeature): null (union operation failed to produce a feature)`);
+          this.logger.error(
+            `  Unioned feature (unionedFeature): null (union operation failed to produce a feature)`
+          );
         }
         // wktMultiPolygon が定義されているかチェック
         if (typeof wktMultiPolygon !== 'undefined') {
-          this.logger.error(`  Generated WKT (wktMultiPolygon): ${wktMultiPolygon}`);
+          this.logger.error(
+            `  Generated WKT (wktMultiPolygon): ${wktMultiPolygon}`
+          );
         } else {
-          this.logger.error(`  Generated WKT (wktMultiPolygon): not generated due to earlier error`);
+          this.logger.error(
+            `  Generated WKT (wktMultiPolygon): not generated due to earlier error`
+          );
         }
         // Skip this entire zone if union fails, to prevent corrupt data
         // continue;
