@@ -111,9 +111,11 @@ export class GeoSPARQLTransformer {
 
     if (dataType === 'flood-hazard' && this.options.aggregateFloodZonesByRank) {
       // Use aggregated processing for flood hazard data
+      this.logger.info('Transforming flood hazard features with aggregation');
       return this.transformFloodHazardFeatures(features);
     } else {
       // Use individual feature processing for other data types
+      this.logger.info('Transforming features individually (legacy mode)');
       return this.transformIndividualFeatures(features);
     }
   }
@@ -144,7 +146,7 @@ export class GeoSPARQLTransformer {
     const allFloodHazardZoneIRIs: string[] = [];
     const allPopulationSnapshotIRIs: string[] = [];
     const allLandUseIRIs: string[] = [];
-
+    this.logger.info(`Transforming ${features.length} features individually`);
     for (const feature of features) {
       const result = this.transformFeature(feature);
       allTriples.push(...result.triples);
@@ -340,6 +342,7 @@ export class GeoSPARQLTransformer {
 
     // Add simplified geometry for low zoom level display
     if (this.options.enableSimplification) {
+      this.logger.info('Creating simplified geometry for flood hazard zone');
       const simplifiedTriples = this.createSimplifiedGeometryForFeature(
         feature,
         hazardZoneIRI
@@ -1268,23 +1271,27 @@ export class GeoSPARQLTransformer {
 
       // Clean and simplify each polygon before creating the MultiPolygon
       const cleanedPolygonCoordinates = zone.polygons
-        .map((p) => {
+        .map(
+          (p) => p.coordinates
+          /*{
           try {
             if (
               p &&
               p.coordinates &&
               p.coordinates[0] &&
-              p.coordinates[0].length >= 4
+              p.coordinates[0].length >= 100
             ) {
               const feature = turf.polygon(p.coordinates);
               // Clean the coordinates first to remove redundant nodes
-              const cleaned = turf.cleanCoords(feature);
+              // to make speedup const cleaned = turf.cleanCoords(feature);
               // Then simplify. A small tolerance helps fix minor topology issues.
-              const simplified = turf.simplify(cleaned, {
+              const simplified = turf.simplify(feature, {
                 tolerance: 0.0001,
                 highQuality: false,
               });
               return simplified.geometry.coordinates;
+            } else {
+              return p.coordinates; // Return as-is if too few points to simplify
             }
           } catch (err: any) {
             this.logger.warn(
@@ -1292,7 +1299,8 @@ export class GeoSPARQLTransformer {
             );
           }
           return null; // Return null for invalid or problematic polygons
-        })
+        }*/
+        )
         .filter((coords) => coords !== null) as any[]; // Filter out any nulls
 
       if (cleanedPolygonCoordinates.length === 0) {
@@ -1570,12 +1578,13 @@ export class GeoSPARQLTransformer {
         feature.geometry as any,
         feature.properties
       );
+      this.logger.info(`org: ${feature?.geometry.coordinates.length}`);
 
       // Simplify the geometry
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false,
+        mutate: true,
       });
 
       if (!simplified || !simplified.geometry) {
@@ -1617,10 +1626,15 @@ export class GeoSPARQLTransformer {
       const simplified = simplify(turfFeature, {
         tolerance,
         highQuality,
-        mutate: false,
+        mutate: true,
       });
-
-      if (!simplified || !simplified.geometry) {
+      const polygonClipping = require('polygon-clipping');
+      const union = polygonClipping.union(simplified.geometry.coordinates);
+      //console.dir(union, { depth: null });
+      this.logger?.debug(
+        `union ${union?.length} ${union?.[0]?.length} ${union?.[0]?.[0]?.length}  ${union?.[0]?.[0]?.[0]?.length}`
+      );
+      if (!union || !simplified || !simplified.geometry) {
         this.logger?.warn(
           'Failed to simplify MultiPolygon geometry - no result'
         );
@@ -1628,9 +1642,10 @@ export class GeoSPARQLTransformer {
       }
 
       // Transform coordinates and convert to WKT
-      const transformedGeometry = this.transformCoordinates(
-        simplified.geometry
-      );
+      const transformedGeometry = this.transformCoordinates({
+        type: union?.[0]?.[0]?.length ? 'MultiPolygon' : 'Polygon',
+        coordinates: union,
+      });
       const wkt = wellknown.stringify(transformedGeometry);
 
       return wkt;
